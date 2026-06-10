@@ -5,6 +5,7 @@ import shap
 import matplotlib.pyplot as plt
 import lime.lime_tabular
 import joblib
+import google.generativeai as genai
 
 from sklearn.inspection import permutation_importance
 
@@ -13,7 +14,15 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
 st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
 
-# DICIONÁRIO DE TRADUÇÃO PARA OS LAUDOS
+# 1.1 CONFIGURAÇÃO DA API DO GEMINI (SECRETS DO STREAMLIT)
+# Para funcionar online, configure a chave GEMINI_API_KEY no painel do Streamlit Cloud
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    llm_disponivel = True
+except Exception:
+    llm_disponivel = False
+
+# DICIONÁRIO DE TRADUÇÃO PARA ENVIAR AO LLM E EXIBIR NO LAUDO
 DICIONARIO_PT = {
     'WaistCirc': 'Circunferência da Cintura (WaistCirc)',
     'BloodGlucose': 'Glicemia de Jejum (BloodGlucose)',
@@ -48,93 +57,78 @@ def carregar_dados():
     y = df['MetabolicSyndrome']
     return df, X, y
 
-# MOTORES DE GERAÇÃO TEXTUAL CLÍNICA AUTOMATIZADA
-def gerar_laudo_global(pfi_ativo, feature_names):
-    importances = pfi_ativo.importances_mean
-    indices = np.argsort(importances)[::-1]
-    top_features = [feature_names[i] for i in indices[:6]] 
+# 3. MOTORES DE INTEGRAÇÃO COM IA GENERATIVA (LLM)
+def chamar_gemini_global(top_features_pt, nao_classicos_pt):
+    if not llm_disponivel:
+        return "⚠️ Erro de Configuração: API Key do Gemini não encontrada nos Secrets do Streamlit."
+        
+    prompt = f"""
+    Você é um endocrinologista sênior e especialista em Inteligência Artificial em Saúde.
+    Analise o comportamento global de um modelo de Machine Learning treinado para detectar Síndrome Metabólica.
+    Com base nas variáveis de maior peso geral que o modelo aprendeu, redija dois pareceres médicos contidos em um único texto:
 
-    # Embora a NCEP-ATP III tenha 5 critérios, usamos 4 pois a Pressão Arterial não está no dataset
-    criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
-    
-    alinhados = [f for f in top_features if f in criterios_ncep]
-    nao_classicos = [f for f in top_features if f not in criterios_ncep]
-    
-    alinhados_pt = traduzir(alinhados)
-    nao_classicos_pt = traduzir(nao_classicos)
+    1. **🩺 Validação Clínica do Algoritmo (Critérios NCEP-ATP III)**: Avalie se o fato de biomarcadores como {top_features_pt} estarem no topo confere robustez e sentido fisiopatológico à luz das diretrizes tradicionais. (Mencione de forma transparente que a Pressão Arterial foi omitida nesta base por limitações do dataset de origem).
+    2. **🧠 Análise Multidimensional (Padrões Complementares)**: Explique o papel de variáveis não-clássicas observadas como influentes ({nao_classicos_pt}), justificando como o algoritmo captura o contínuo do risco metabólico além dos pontos de corte tradicionais de forma holística.
 
-    texto_classico = f"""
-    **🩺 Validação Clínica do Algoritmo (Critérios NCEP-ATP III)**
-    A análise de importância global evidencia que o modelo prioriza preditores fortemente alinhados à fisiopatologia da Síndrome Metabólica. Biomarcadores estabelecidos na literatura, como {", ".join([f"**{f}**" for f in alinhados_pt])}, exercem a maior influência preditiva. Isto demonstra que a inteligência artificial reproduz o raciocínio clínico validado, garantindo robustez e confiabilidade na estratificação de risco.
-    *(Nota de Transparência: O critério de Pressão Arterial preconizado pela diretriz não compõe a matriz preditiva deste modelo devido a limitações de coleta no coorte original).*
+    Regras de Redação:
+    - Linguagem formal, técnica, sóbria e consultiva para outros médicos lerem.
+    - Evite termos alarmistas. Use negritos do markdown para destacar pontos vitais.
+    - Resposta sucinta, estruturada em parágrafos limpos.
     """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Erro na chamada da API do Gemini: {str(e)}"
+
+def chamar_gemini_local(prob_shap, alertas_clinicos, fatores_risco_todos, fatores_protecao_todos, fidelidade, tipo_modelo):
+    if not llm_disponivel:
+        return {
+            'laudo': "⚠️ Erro de Configuração: API Key do Gemini não encontrada nos Secrets.",
+            'alto_risco': prob_shap >= 50.0,
+            'tem_alertas': len(alertas_clinicos) > 0
+        }
+
+    status_risco = "RISCO CLÍNICO SIGNIFICATIVO" if prob_shap >= 50.0 else "RISCO CLÍNICO CONTROLADO"
     
-    texto_holistico = f"""
-    **🧠 Análise Multidimensional (Padrões Complementares Identificados)**
-    Além dos critérios diagnósticos tradicionais, o algoritmo identifica fatores de risco de forma integrada. Variáveis como {", ".join([f"**{f}**" for f in nao_classicos_pt])} apresentaram impacto significativo na estratificação. Isto indica que o sistema avalia o contínuo metabólico do indivíduo, rastreando vulnerabilidades sociodemográficas e laboratoriais que atuam como cofatores no agravamento clínico, permitindo rastrear o risco de forma mais holística.
+    prompt = f"""
+    Você é um endocrinologista sênior atuando em um Sistema de Suporte à Decisão Clínica.
+    Escreva uma análise médica personalizada para um paciente específico baseado nas métricas de risco e explicabilidade (XAI) do modelo `{tipo_modelo}`.
+
+    DADOS DO PACIENTE:
+    - Probabilidade Calculada pelo Modelo: {prob_shap:.1f}% de Risco ({status_risco})
+    - Limiares Críticos Tradicionais Ultrapassados (NCEP-ATP III): {alertas_clinicos if alertas_clinicos else 'Nenhum limiar estrito de glicose, cintura, HDL ou triglicerídeos ultrapassado isoladamente.'}
+    - Fatores Contribuintes Locais (Variáveis que o SHAP indicou que mais aumentaram o risco): {fatores_risco_todos}
+    - Fatores Atenuantes Locais (Variáveis que o SHAP indicou que protegeram/puxaram o risco para baixo): {fatores_protecao_todos}
+    - Grau de Concordância Estatística do Gráfico Substituto (Fidelidade LIME): {fidelidade:.1f}%
+
+    Gere uma resposta estruturada contendo estritamente três seções com as seguintes diretrizes:
+    1. **📋 Rastreio de Parâmetros Diretos (NCEP-ATP III)**: Descreva textualmente os achados biológicos objetivos do paciente frente aos limites rígidos da diretriz tradicional.
+    2. **🤖 Auditoria Multidimensional (Explicabilidade Algorítmica)**: Analise de forma holística como a IA combinou as variáveis contribuintes e atenuantes para chegar no escore final de risco. 
+    3. **⚕️ Conduta Médica Sugerida e Confiabilidade XAI**: Sugira uma conduta prudente baseada no nível de risco (MEV, propedêutica clínica como aferição de pressão arterial e exames lipidêmicos complementares). Avalie também a confiabilidade do LIME com base no grau de fidelidade fornecido (se for menor que 85%, alerte o clínico para focar no SHAP Waterfall).
+
+    Regras de Redação:
+    - Linguagem extremamente técnica, sóbria, sem termos alarmistas (não use termos como 'falência iminente' ou 'escudo biológico').
+    - O texto deve demonstrar honestidade algorítmica, deixando claro que o software sugere risco estatístico e apoia o julgamento soberano do médico.
+    - Retorne as seções de forma clara utilizando os títulos propostos em negrito.
     """
-    
-    return {'classico': texto_classico, 'holistico': texto_holistico}
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return {
+            'laudo': response.text,
+            'alto_risco': prob_shap >= 50.0,
+            'tem_alertas': len(alertas_clinicos) > 0
+        }
+    except Exception as e:
+        return {
+            'laudo': f"Erro na chamada da API do Gemini: {str(e)}",
+            'alto_risco': prob_shap >= 50.0,
+            'tem_alertas': len(alertas_clinicos) > 0
+        }
 
-def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_values_paciente, tipo_modelo):
-    colunas = dados_brutos.columns.tolist()
-
-    if hasattr(shap_values_paciente, "values"):
-        valores_shap = shap_values_paciente.values
-    else:
-        valores_shap = shap_values_paciente
-
-    idx_positivos = np.argsort(valores_shap)[::-1]
-    idx_negativos = np.argsort(valores_shap)
-
-    fatores_risco_todos = traduzir([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
-    fatores_protecao_todos = traduzir([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
-
-    alto_risco = prob_shap >= 50.0
-    status_diag = "RISCO CLÍNICO SIGNIFICATIVO" if alto_risco else "RISCO CLÍNICO CONTROLADO"
-
-    glicemia = dados_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_brutos else None
-    cintura = dados_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_brutos else None
-    trig = dados_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_brutos else None
-    hdl = dados_brutos['HDL'].values[0] if 'HDL' in dados_brutos else None
-
-    alertas_clinicos = []
-    if glicemia and glicemia >= 100: alertas_clinicos.append(f"Glicemia de Jejum ({glicemia:.1f} mg/dL)")
-    if cintura and cintura >= 88: alertas_clinicos.append(f"Circunferência da Cintura ({cintura:.1f} cm)")
-    if trig and trig >= 150: alertas_clinicos.append(f"Triglicerídeos ({trig:.1f} mg/dL)")
-    if hdl and hdl < 50: alertas_clinicos.append(f"HDL ({hdl:.1f} mg/dL)")
-    
-    tem_alertas = len(alertas_clinicos) > 0
-
-    texto_classico = f"""
-    **📋 Rastreio de Parâmetros Diretos (NCEP-ATP III)**
-    Avaliação objetiva dos pontos de corte tradicionais para os marcadores monitorados pelo sistema.
-    **Alterações Identificadas:** {", ".join(alertas_clinicos) if tem_alertas else "Nenhum dos limiares críticos monitorados (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada segundo os critérios estritos da diretriz."}
-    """
-
-    texto_ia = f"""
-    **🤖 Estratificação de Risco Algorítmica (Auditoria SHAP)**
-    O modelo calculou uma probabilidade de **{prob_shap:.1f}%** para o enquadramento do paciente na Síndrome Metabólica (**{status_diag}**), ponderando a interação contínua de todo o painel de variáveis.
-    * **Fatores Contribuintes (Elevam o risco):** Os elementos que mais elevaram a estimativa de risco algorítmico neste paciente foram: {", ".join([f"**{f}**" for f in fatores_risco_todos])}.
-    * **Fatores Atenuantes (Reduzem o risco):** As variáveis que reduziram a probabilidade predita, indicando preservação relativa, foram: {", ".join([f"**{f}**" for f in fatores_protecao_todos])}.
-    """
-
-    texto_conduta = f"""
-    **⚕️ Apoio à Decisão e Nível de Confiabilidade do Sistema**
-    {"**Sugestão de Conduta:** O rastreio algorítmico sugere um perfil de alto risco metabólico sistêmico. Recomenda-se a correlação com a prática clínica diária, aprofundamento da propedêutica (ex: aferição pressórica, perfil lipídico completo) e avaliação para início de intervenções de Mudança de Estilo de Vida (MEV)." if alto_risco else "**Sugestão de Conduta:** O perfil atual sugere estabilidade metabólica segundo o modelo preditivo. Recomenda-se o seguimento clínico de rotina e a manutenção das medidas preventivas primárias."}
-    
-    *Auditoria de Transparência (LIME): O grau de concordância explicativa local é de {fidelidade:.1f}%.* {"Isto indica alta confiabilidade na leitura do impacto individual das variáveis." if fidelidade >= 85.0 else "Devido a interações estatísticas não-lineares neste paciente específico, a explicação simplificada (LIME) deve ser interpretada com cautela; priorize a observação do gráfico exato (SHAP Waterfall)."}
-    """
-
-    return {
-        'classico': texto_classico, 
-        'ia': texto_ia, 
-        'conduta': texto_conduta,
-        'tem_alertas': tem_alertas,
-        'alto_risco': alto_risco
-    }
-
-# 3. CARREGAMENTO DOS MODELOS OTIMIZADOS E EXPLICADORES
+# 4. PREPARAÇÃO DOS MODELOS E EXPLICADORES
 @st.cache_resource
 def preparar_modelos_e_xai(_X, _y):
     scaler = joblib.load('scaler.pkl')
@@ -169,7 +163,7 @@ scaler, modelo_dt, explainer_dt, shap_values_dt, pfi_dt, modelo_cat, explainer_c
 
 st.divider()
 
-# 4. INTERFACE DE SELEÇÃO DE MODELOS
+# 5. INTERFACE DE SELEÇÃO DE MODELOS
 st.subheader("⚙️ Modelo Ativo para Auditoria Explicável (XAI)")
 tipo_modelo = st.selectbox(
     "Escolha qual motor matemático (otimizado pelo GridSearch) guiará as explicações abaixo:",
@@ -208,14 +202,22 @@ with col_global_2:
     fig_pfi.tight_layout()
     st.pyplot(fig_pfi)
 
-# INJEÇÃO DO LAUDO DA SEÇÃO 1 (COM CORES)
-laudos_globais = gerar_laudo_global(pfi_ativo, X.columns.tolist())
-st.success(laudos_globais['classico'])  
-st.info(laudos_globais['holistico'])    
+# GERAÇÃO DO LAUDO GLOBAL VIA GEMINI
+with st.spinner("O LLM está gerando o parecer analítico global de diretrizes..."):
+    importances = pfi_ativo.importances_mean
+    indices = np.argsort(importances)[::-1]
+    top_features = [X.columns[i] for i in indices[:6]]
+    criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
+    
+    alinhados = [f for f in top_features if f in criterios_ncep]
+    nao_classicos = [f for f in top_features if f not in criterios_ncep]
+    
+    laudo_global_texto = chamar_gemini_global(traduzir(alinhados), traduzir(nao_classicos))
+    st.info(laudo_global_texto)
 
 st.divider()
 
-# --- SECÇÃO 2: LOCAL (PACIENTE ESPECÍFICO) ---
+# --- SECÇÃO 2: LOCAL (PACIENTE ESPECÍFICO DO DATASET) ---
 st.header("2. Interpretação Local (Pacientes do Dataset)")
 st.write("Selecione um paciente histórico para entender as variáveis que orientaram o laudo algorítmico.")
 
@@ -276,29 +278,44 @@ with col_local_2:
     fig_lime.tight_layout()
     st.pyplot(fig_lime)
 
-# INJEÇÃO DO LAUDO DA SEÇÃO 2 (COM CORES DINÂMICAS)
+# EXTRAÇÃO DE VARIÁVEIS LOCAIS E ENVIO AO GEMINI (SEÇÃO 2)
 if tipo_modelo == "Ensemble (CatBoost)":
-    sv_p = shap_values_ativos[idx_paciente]
+    valores_shap = shap_values_ativos[idx_paciente].values if hasattr(shap_values_ativos[idx_paciente], "values") else shap_values_ativos[idx_paciente]
 else:
-    sv_p = shap_values_dt[:, :, 1][idx_paciente]
+    valores_shap = shap_values_dt[:, :, 1][idx_paciente]
 
-laudos_locais = gerar_laudo_local(dados_paciente_brutos, prob_shap, prob_lime, fidelidade_xai, sv_p, tipo_modelo)
+colunas = X.columns.tolist()
+idx_positivos = np.argsort(valores_shap)[::-1]
+idx_negativos = np.argsort(valores_shap)
 
-if laudos_locais['tem_alertas']:
-    st.warning(laudos_locais['classico'])
-else:
-    st.success(laudos_locais['classico'])
+fr_todos = traduzir([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
+fp_todos = traduzir([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
 
-st.info(laudos_locais['ia'])
+glicemia = dados_paciente_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_paciente_brutos else None
+cintura = dados_paciente_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_paciente_brutos else None
+trig = dados_paciente_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_paciente_brutos else None
+hdl = dados_paciente_brutos['HDL'].values[0] if 'HDL' in dados_paciente_brutos else None
 
-if laudos_locais['alto_risco']:
-    st.error(laudos_locais['conduta'])
-else:
-    st.success(laudos_locais['conduta'])
+alertas_c = []
+if glicemia and glicemia >= 100: alertas_c.append(f"Glicemia de Jejum: {glicemia:.1f} mg/dL")
+if cintura and cintura >= 88: alertas_c.append(f"Circunferência da Cintura: {cintura:.1f} cm")
+if trig and trig >= 150: alertas_c.append(f"Triglicerídeos: {trig:.1f} mg/dL")
+if hdl and hdl < 50: alertas_c.append(f"HDL: {hdl:.1f} mg/dL")
+
+with st.spinner("O LLM está gerando o parecer clínico individualizado..."):
+    resultado_llm_local = chamar_gemini_local(prob_shap, alertas_c, fr_todos, fp_todos, fidelidade_xai, tipo_modelo)
+    
+    # Renderização Condicional Inteligente baseada no Output da IA
+    if resultado_llm_local['alto_risco']:
+        st.error(resultado_llm_local['laudo'])
+    elif resultado_llm_local['tem_alertas']:
+        st.warning(resultado_llm_local['laudo'])
+    else:
+        st.success(resultado_llm_local['laudo'])
 
 st.divider()
 
-# --- SECÇÃO 3: ENTRADA DE NOVO PACIENTE (FORMULÁRIO MANUAL) ---
+# --- SECÇÃO 3: ENTRADA DE NOVO PACIENTE (FORMULÁRIO MANUAL SIMULADOR) ---
 st.header("3. Entrada de Novo Paciente (Simulador Clínico)")
 st.write("Insira os parâmetros clínicos e laboratoriais abaixo para gerar um diagnóstico explicável.")
 
@@ -402,17 +419,26 @@ if submitted:
             fig_new_lime.tight_layout()
             st.pyplot(fig_new_lime)
 
-        # INJEÇÃO DO LAUDO DA SEÇÃO 3 (COM CORES DINÂMICAS)
-        laudos_simulador = gerar_laudo_local(df_novo_bruto, p_new_shap, p_new_lime, fidelidade_new_xai, shap_values_new, tipo_modelo)
+        # PARSE DE DADOS DO NOVO PACIENTE E INVOCAÇÃO DO GEMINI (SEÇÃO 3)
+        valores_shap_new = shap_values_new.values if hasattr(shap_values_new, "values") else shap_values_new
+        idx_pos_new = np.argsort(valores_shap_new)[::-1]
+        idx_neg_new = np.argsort(valores_shap_new)
 
-        if laudos_simulador['tem_alertas']:
-            st.warning(laudos_simulador['classico'])
-        else:
-            st.success(laudos_simulador['classico'])
+        fr_new = traduzir([colunas[i] for i in idx_pos_new if valores_shap_new[i] > 0][:4])
+        fp_new = traduzir([colunas[i] for i in idx_neg_new if valores_shap_new[i] < 0][:3])
 
-        st.info(laudos_simulador['ia'])
+        alertas_new = []
+        if blood_in and blood_in >= 100: alertas_new.append(f"Glicemia de Jejum: {blood_in:.1f} mg/dL")
+        if waist_in and waist_in >= 88: alertas_new.append(f"Circunferência da Cintura: {waist_in:.1f} cm")
+        if tri_in and tri_in >= 150: alertas_new.append(f"Triglicerídeos: {tri_in:.1f} mg/dL")
+        if hdl_in and hdl_in < 50: alertas_new.append(f"HDL: {hdl_in:.1f} mg/dL")
 
-        if laudos_simulador['alto_risco']:
-            st.error(laudos_simulador['conduta'])
-        else:
-            st.success(laudos_simulador['conduta'])
+        with st.spinner("O Gemini está consolidando o laudo clínico em tempo real..."):
+            laudo_simulador = chamar_gemini_local(p_new_shap, alertas_new, fr_new, fp_new, fidelidade_new_xai, tipo_modelo)
+            
+            if laudo_simulador['alto_risco']:
+                st.error(laudo_simulador['laudo'])
+            elif laudo_simulador['tem_alertas']:
+                st.warning(laudo_simulador['laudo'])
+            else:
+                st.success(laudo_simulador['laudo'])
