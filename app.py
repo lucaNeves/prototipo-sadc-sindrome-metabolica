@@ -13,6 +13,33 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
 st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
 
+# DICIONÁRIO DE TRADUÇÃO PARA OS LAUDOS
+DICIONARIO_PT = {
+    'WaistCirc': 'Circunferência da Cintura (WaistCirc)',
+    'BloodGlucose': 'Glicemia de Jejum (BloodGlucose)',
+    'Triglycerides': 'Triglicerídeos (Triglycerides)',
+    'HDL': 'Lipoproteína de Alta Densidade (HDL)',
+    'BMI': 'Índice de Massa Corporal (IMC)',
+    'Age': 'Idade',
+    'Sex': 'Sexo Biológico',
+    'Income': 'Renda Anual',
+    'UricAcid': 'Ácido Úrico (UricAcid)',
+    'Albuminuria': 'Albuminúria',
+    'UrAlbCr': 'Razão Albumina/Creatinina (UrAlbCr)',
+    'Marital_Married': 'Estado Civil (Casado)',
+    'Marital_Single': 'Estado Civil (Solteiro)',
+    'Marital_Separated': 'Estado Civil (Separado)',
+    'Marital_Widowed': 'Estado Civil (Viúvo)',
+    'Race_Black': 'Raça/Etnia (Negra)',
+    'Race_Hispanic': 'Raça/Etnia (Hispânica)',
+    'Race_MexAmerican': 'Raça/Etnia (Mexicano-Americana)',
+    'Race_White': 'Raça/Etnia (Branca)',
+    'Race_Other': 'Raça/Etnia (Outra)'
+}
+
+def traduzir(lista_variaveis):
+    return [DICIONARIO_PT.get(var, var) for var in lista_variaveis]
+
 # 2. CARREGAMENTO DOS DADOS
 @st.cache_data
 def carregar_dados():
@@ -27,18 +54,24 @@ def gerar_laudo_global(pfi_ativo, feature_names):
     indices = np.argsort(importances)[::-1]
     top_features = [feature_names[i] for i in indices[:6]] 
 
+    # Embora a NCEP-ATP III tenha 5 critérios, usamos 4 pois a Pressão Arterial não está no dataset
     criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
+    
     alinhados = [f for f in top_features if f in criterios_ncep]
     nao_classicos = [f for f in top_features if f not in criterios_ncep]
+    
+    alinhados_pt = traduzir(alinhados)
+    nao_classicos_pt = traduzir(nao_classicos)
 
     texto_classico = f"""
     **🩺 Validação Biológica e Alinhamento de Diretrizes (NCEP-ATP III)**
-    O mapeamento de relevância global confirma que o motor preditivo ancorou a sua matemática na fisiopatologia real. Variáveis clássicas de resistência insulínica e dislipidemia, como {", ".join([f"*{f}*" for f in alinhados])}, assumem o topo da importância preditiva. Isto confere extrema segurança médica ao modelo, provando que este não decorou ruídos, mas sim marcadores clínicos validados.
+    O mapeamento de relevância global confirma que o motor preditivo ancorou a sua matemática na fisiopatologia real. Variáveis clássicas de resistência insulínica e dislipidemia, como {", ".join([f"*{f}*" for f in alinhados_pt])}, assumem o topo da importância preditiva. Isto confere extrema segurança médica ao modelo, provando que este não memorizou ruídos, mas sim marcadores clínicos validados.
+    *(Nota de Limitação: O critério de Pressão Arterial da diretriz NCEP-ATP III não compõe a matriz devido a restrições na base original).*
     """
     
     texto_holistico = f"""
     **🧠 Descoberta de Padrões e Visão Holística da Máquina**
-    Expandindo a auditoria para todas as variáveis, nota-se que a Inteligência Artificial capturou sinais vitais invisíveis às diretrizes rígidas. Preditores secundários e estruturais como {", ".join([f"`{f}`" for f in nao_classicos])} revelaram forte poder de separação. O algoritmo demonstra capacidade de prever a deterioração sistêmica analisando a interação contínua destes fatores periféricos, mesmo antes de os exames de sangue clássicos estourarem os limites patológicos.
+    Expandindo a auditoria para todas as variáveis, nota-se que a Inteligência Artificial capturou sinais vitais além das diretrizes rígidas. Preditores secundários e estruturais como {", ".join([f"`{f}`" for f in nao_classicos_pt])} revelaram forte poder de separação. O algoritmo demonstra capacidade de prever a deterioração sistêmica analisando a interação contínua destes fatores periféricos, mesmo antes de os exames de sangue clássicos estourarem os limites patológicos.
     """
     
     return {'classico': texto_classico, 'holistico': texto_holistico}
@@ -54,8 +87,8 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     idx_positivos = np.argsort(valores_shap)[::-1]
     idx_negativos = np.argsort(valores_shap)
 
-    fatores_risco_todos = [colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4]
-    fatores_protecao_todos = [colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3]
+    fatores_risco_todos = traduzir([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
+    fatores_protecao_todos = traduzir([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
 
     alto_risco = prob_shap >= 50.0
     status_diag = "RISCO ELEVADO" if alto_risco else "BAIXO RISCO"
@@ -66,17 +99,17 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     hdl = dados_brutos['HDL'].values[0] if 'HDL' in dados_brutos else None
 
     alertas_clinicos = []
-    if glicemia and glicemia >= 100: alertas_clinicos.append(f"Hiperglicemia ({glicemia:.1f} mg/dL)")
-    if cintura and cintura >= 88: alertas_clinicos.append(f"Obesidade Visceral ({cintura:.1f} cm)")
-    if trig and trig >= 150: alertas_clinicos.append(f"Hipertrigliceridemia ({trig:.1f} mg/dL)")
-    if hdl and hdl < 50: alertas_clinicos.append(f"HDL Baixo ({hdl:.1f} mg/dL)")
+    if glicemia and glicemia >= 100: alertas_clinicos.append(f"Glicemia de Jejum ({glicemia:.1f} mg/dL)")
+    if cintura and cintura >= 88: alertas_clinicos.append(f"Circunferência da Cintura ({cintura:.1f} cm)")
+    if trig and trig >= 150: alertas_clinicos.append(f"Triglicerídeos ({trig:.1f} mg/dL)")
+    if hdl and hdl < 50: alertas_clinicos.append(f"Lipoproteína de Alta Densidade - HDL ({hdl:.1f} mg/dL)")
     
     tem_alertas = len(alertas_clinicos) > 0
 
     texto_classico = f"""
     **📋 Rastreio Fisiopatológico Direto (Critérios NCEP-ATP III)**
     Uma avaliação estrita baseada nos pontos de corte tradicionais revela a situação atual do paciente.
-    **Achados:** {", ".join(alertas_clinicos) if tem_alertas else "Nenhum dos limiares críticos (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada."}
+    **Achados Clínicos:** {", ".join(alertas_clinicos) if tem_alertas else "Nenhum dos limiares críticos monitorados pelo sistema (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada."}
     """
 
     texto_ia = f"""
@@ -89,7 +122,7 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     texto_conduta = f"""
     **⚕️ Conduta Médica Sugerida e Confiabilidade XAI**
     {"**Intervenção Imediata:** O modelo matemático aponta falência metabólica iminente baseada no cruzamento de variáveis primárias e secundárias. Prescreve-se rigorosa correção dietética, fomento à atividade física e monitorização clínica continuada." if alto_risco else "**Manutenção:** A arquitetura sistêmica do paciente apresenta forte robustez metabólica. Recomenda-se apenas a manutenção de um estilo de vida profilático e avaliações anuais de rotina."}
-    *Aviso de Auditoria (LIME): A convergência explicativa deste laudo é de {fidelidade:.1f}%.* {"A explicação é altamente linear e fiável." if fidelidade >= 85.0 else "O paciente apresenta interações não-lineares raras; foque a avaliação visual nos valores exatos do gráfico de Cascata (SHAP)."}
+    *Aviso de Auditoria (LIME): A convergência explicativa deste laudo é de {fidelidade:.1f}%.* {"A explicação é altamente linear e **confiável**." if fidelidade >= 85.0 else "O paciente apresenta interações não-lineares complexas; foque a avaliação visual nos valores exatos do gráfico de Cascata (SHAP)."}
     """
 
     return {
@@ -176,8 +209,8 @@ with col_global_2:
 
 # INJEÇÃO DO LAUDO DA SEÇÃO 1 (COM CORES)
 laudos_globais = gerar_laudo_global(pfi_ativo, X.columns.tolist())
-st.success(laudos_globais['classico'])  # Caixa Verde (Tradição Validada)
-st.info(laudos_globais['holistico'])    # Caixa Azul (Descobertas da IA)
+st.success(laudos_globais['classico'])  
+st.info(laudos_globais['holistico'])    
 
 st.divider()
 
@@ -250,16 +283,13 @@ else:
 
 laudos_locais = gerar_laudo_local(dados_paciente_brutos, prob_shap, prob_lime, fidelidade_xai, sv_p, tipo_modelo)
 
-# Caixa 1: Rastreio Clássico (Amarela se houver alerta, Verde se estiver limpo)
 if laudos_locais['tem_alertas']:
     st.warning(laudos_locais['classico'])
 else:
     st.success(laudos_locais['classico'])
 
-# Caixa 2: Auditoria da IA (Sempre Azul para denotar explicação técnica neutra)
 st.info(laudos_locais['ia'])
 
-# Caixa 3: Conduta Médica (Vermelha para Intervenção, Verde para Manutenção)
 if laudos_locais['alto_risco']:
     st.error(laudos_locais['conduta'])
 else:
