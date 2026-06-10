@@ -64,14 +64,14 @@ def gerar_laudo_global(pfi_ativo, feature_names):
     nao_classicos_pt = traduzir(nao_classicos)
 
     texto_classico = f"""
-    **🩺 Validação Biológica e Alinhamento de Diretrizes (NCEP-ATP III)**
-    O mapeamento de relevância global confirma que o motor preditivo ancorou a sua matemática na fisiopatologia real. Variáveis clássicas de resistência insulínica e dislipidemia, como {", ".join([f"**{f}**" for f in alinhados_pt])}, assumem o topo da importância preditiva. Isto confere extrema segurança médica ao modelo, provando que este não memorizou ruídos, mas sim marcadores clínicos validados.
-    *(Nota de Limitação: O critério de Pressão Arterial da diretriz NCEP-ATP III não compõe a matriz devido a restrições na base original).*
+    **🩺 Validação Clínica do Algoritmo (Critérios NCEP-ATP III)**
+    A análise de importância global evidencia que o modelo prioriza preditores fortemente alinhados à fisiopatologia da Síndrome Metabólica. Biomarcadores estabelecidos na literatura, como {", ".join([f"**{f}**" for f in alinhados_pt])}, exercem a maior influência preditiva. Isto demonstra que a inteligência artificial reproduz o raciocínio clínico validado, garantindo robustez e confiabilidade na estratificação de risco.
+    *(Nota de Transparência: O critério de Pressão Arterial preconizado pela diretriz não compõe a matriz preditiva deste modelo devido a limitações de coleta no coorte original).*
     """
     
     texto_holistico = f"""
-    **🧠 Descoberta de Padrões e Visão Holística da Máquina**
-    Expandindo a auditoria para todas as variáveis, nota-se que a Inteligência Artificial capturou sinais vitais além das diretrizes rígidas. Preditores secundários e estruturais como {", ".join([f"**{f}**" for f in nao_classicos_pt])} revelaram forte poder de separação. O algoritmo demonstra capacidade de prever a deterioração sistêmica analisando a interação contínua destes fatores periféricos, mesmo antes de os exames de sangue clássicos estourarem os limites patológicos.
+    **🧠 Análise Multidimensional (Padrões Complementares Identificados)**
+    Além dos critérios diagnósticos tradicionais, o algoritmo identifica fatores de risco de forma integrada. Variáveis como {", ".join([f"**{f}**" for f in nao_classicos_pt])} apresentaram impacto significativo na estratificação. Isto indica que o sistema avalia o contínuo metabólico do indivíduo, rastreando vulnerabilidades sociodemográficas e laboratoriais que atuam como cofatores no agravamento clínico, permitindo rastrear o risco de forma mais holística.
     """
     
     return {'classico': texto_classico, 'holistico': texto_holistico}
@@ -91,7 +91,7 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     fatores_protecao_todos = traduzir([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
 
     alto_risco = prob_shap >= 50.0
-    status_diag = "RISCO ELEVADO" if alto_risco else "BAIXO RISCO"
+    status_diag = "RISCO CLÍNICO SIGNIFICATIVO" if alto_risco else "RISCO CLÍNICO CONTROLADO"
 
     glicemia = dados_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_brutos else None
     cintura = dados_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_brutos else None
@@ -102,27 +102,28 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     if glicemia and glicemia >= 100: alertas_clinicos.append(f"Glicemia de Jejum ({glicemia:.1f} mg/dL)")
     if cintura and cintura >= 88: alertas_clinicos.append(f"Circunferência da Cintura ({cintura:.1f} cm)")
     if trig and trig >= 150: alertas_clinicos.append(f"Triglicerídeos ({trig:.1f} mg/dL)")
-    if hdl and hdl < 50: alertas_clinicos.append(f"Lipoproteína de Alta Densidade - HDL ({hdl:.1f} mg/dL)")
+    if hdl and hdl < 50: alertas_clinicos.append(f"HDL ({hdl:.1f} mg/dL)")
     
     tem_alertas = len(alertas_clinicos) > 0
 
     texto_classico = f"""
-    **📋 Rastreio Fisiopatológico Direto (Critérios NCEP-ATP III)**
-    Uma avaliação estrita baseada nos pontos de corte tradicionais revela a situação atual do paciente.
-    **Achados Clínicos:** {", ".join(alertas_clinicos) if tem_alertas else "Nenhum dos limiares críticos monitorados pelo sistema (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada."}
+    **📋 Rastreio de Parâmetros Diretos (NCEP-ATP III)**
+    Avaliação objetiva dos pontos de corte tradicionais para os marcadores monitorados pelo sistema.
+    **Alterações Identificadas:** {", ".join(alertas_clinicos) if tem_alertas else "Nenhum dos limiares críticos monitorados (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada segundo os critérios estritos da diretriz."}
     """
 
     texto_ia = f"""
-    **🤖 Auditoria Multidimensional (Explicabilidade Algorítmica)**
-    Analisando simultaneamente a complexidade contínua de todo o perfil biológico e socioeconômico, a IA estabeleceu uma assinatura de **{prob_shap:.1f}%** de Risco ({status_diag}).
-    * **Principais Agravantes Sistêmicos:** {", ".join([f"**{f}**" for f in fatores_risco_todos])}.
-    * **Escudos Biológicos (Protetores):** {", ".join([f"**{f}**" for f in fatores_protecao_todos])}.
+    **🤖 Estratificação de Risco Algorítmica (Auditoria SHAP)**
+    O modelo calculou uma probabilidade de **{prob_shap:.1f}%** para o enquadramento do paciente na Síndrome Metabólica (**{status_diag}**), ponderando a interação contínua de todo o painel de variáveis.
+    * **Fatores Contribuintes (Elevam o risco):** Os elementos que mais elevaram a estimativa de risco algorítmico neste paciente foram: {", ".join([f"**{f}**" for f in fatores_risco_todos])}.
+    * **Fatores Atenuantes (Reduzem o risco):** As variáveis que reduziram a probabilidade predita, indicando preservação relativa, foram: {", ".join([f"**{f}**" for f in fatores_protecao_todos])}.
     """
 
     texto_conduta = f"""
-    **⚕️ Conduta Médica Sugerida e Confiabilidade XAI**
-    {"**Intervenção Imediata:** O modelo matemático aponta falência metabólica iminente baseada no cruzamento de variáveis primárias e secundárias. Prescreve-se rigorosa correção dietética, fomento à atividade física e monitorização clínica continuada." if alto_risco else "**Manutenção:** A arquitetura sistêmica do paciente apresenta forte robustez metabólica. Recomenda-se apenas a manutenção de um estilo de vida profilático e avaliações anuais de rotina."}
-    *Aviso de Auditoria (LIME): A convergência explicativa deste laudo é de {fidelidade:.1f}%.* {"A explicação é altamente linear e **confiável**." if fidelidade >= 85.0 else "O paciente apresenta interações não-lineares complexas; foque a avaliação visual nos valores exatos do gráfico de Cascata (SHAP)."}
+    **⚕️ Apoio à Decisão e Nível de Confiabilidade do Sistema**
+    {"**Sugestão de Conduta:** O rastreio algorítmico sugere um perfil de alto risco metabólico sistêmico. Recomenda-se a correlação com a prática clínica diária, aprofundamento da propedêutica (ex: aferição pressórica, perfil lipídico completo) e avaliação para início de intervenções de Mudança de Estilo de Vida (MEV)." if alto_risco else "**Sugestão de Conduta:** O perfil atual sugere estabilidade metabólica segundo o modelo preditivo. Recomenda-se o seguimento clínico de rotina e a manutenção das medidas preventivas primárias."}
+    
+    *Auditoria de Transparência (LIME): O grau de concordância explicativa local é de {fidelidade:.1f}%.* {"Isto indica alta confiabilidade na leitura do impacto individual das variáveis." if fidelidade >= 85.0 else "Devido a interações estatísticas não-lineares neste paciente específico, a explicação simplificada (LIME) deve ser interpretada com cautela; priorize a observação do gráfico exato (SHAP Waterfall)."}
     """
 
     return {
