@@ -7,3 +7,4 @@ shap
 lime
 matplotlib
 joblib
+google-generativeai
