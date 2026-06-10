@@ -1,3 +1,4 @@
+%%writefile app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -25,18 +26,22 @@ def carregar_dados():
 def gerar_laudo_global(pfi_ativo, feature_names):
     importances = pfi_ativo.importances_mean
     indices = np.argsort(importances)[::-1]
-    top_features = [feature_names[i] for i in indices[:4]]
+    top_features = [feature_names[i] for i in indices[:6]] # Ampliado para pegar o top 6 geral
 
     criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
     alinhados = [f for f in top_features if f in criterios_ncep]
+    nao_classicos = [f for f in top_features if f not in criterios_ncep]
 
     texto_laudo = f"""
-    ##### 📄 Parecer Médico de Alinhamento de Diretrizes (NCEP-ATP III)
-    O mapeamento de relevância global do motor preditivo indica uma **{"alta" if len(alinhados) >= 3 else "moderada"} aderência** aos critérios diagnósticos estabelecidos pelo *NCEP-ATP III*.
-
-    **Variáveis de Maior Peso Clínico no Modelo:** {", ".join([f"`{f}`" for f in top_features])}.
-
-    **Análise de Aderência Médica:** Na perspectiva fisiopatológica, o fato de biomarcadores como {", ".join([f"*{f}*" for f in alinhados])} figurarem no topo do ordenamento de importância valida o comportamento do algoritmo. Isso comprova que o modelo aprendeu a priorizar marcadores diretos de resistência insulínica, obesidade visceral e dislipidemia aterogênica em detrimento de ruídos estatísticos ou variáveis sociodemográficas secundárias. Portanto, as decisões globais do sistema estão fortemente respaldadas e correlacionadas com a fisiopatologia clássica da Síndrome Metabólica.
+    ##### 📄 Parecer Médico de Alinhamento de Diretrizes (Segundo a NCEP-ATP III)
+    O mapeamento de relevância global indica uma **{"alta" if len(alinhados) >= 3 else "moderada"} aderência** aos critérios diagnósticos estabelecidos pelo *NCEP-ATP III*. Na perspectiva fisiopatológica, o modelo aprendeu a priorizar corretamente marcadores diretos como {", ".join([f"*{f}*" for f in alinhados])}. Isso comprova que as decisões base do sistema estão correlacionadas com a fisiopatologia clássica da Síndrome Metabólica.
+    
+    ---
+    
+    ##### 🧠 Parecer Algorítmico Expandido (Padrões Holísticos e Não-Clássicos)
+    Ao expandir a auditoria para **todas as variáveis** rastreadas pela Inteligência Artificial, observa-se que o modelo captura sinais vitais além dos critérios ortodoxos. 
+    * **Preditores Ocultos de Alto Impacto:** Variáveis fora da tríade clássica, como {", ".join([f"`{f}`" for f in nao_classicos])}, demonstraram um fortíssimo poder de separação nesta população.
+    * **Conclusão de Machine Learning:** O algoritmo não se limitou a memorizar regras médicas rígidas; ele encontrou correlações matemáticas valiosas em atributos demográficos, antropométricos (IMC) ou laboratoriais secundários (Ácido Úrico, Albuminúria). Isto dota o sistema de uma visão holística, permitindo identificar o risco metabólico mesmo em pacientes que ainda não ultrapassaram os limiares críticos da NCEP-ATP III, mas que já apresentam deterioração sistêmica.
     """
     return texto_laudo
 
@@ -52,39 +57,45 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     idx_positivos = np.argsort(valores_shap)[::-1]
     idx_negativos = np.argsort(valores_shap)
 
-    fatores_risco = [colunas[i] for i in idx_positivos if valores_shap[i] > 0][:3]
-    fatores_protecao = [colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3]
+    fatores_risco_todos = [colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4]
+    fatores_protecao_todos = [colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3]
 
     status_diag = "RISCO ELEVADO (Compatível com SM)" if prob_shap >= 50.0 else "BAIXO RISCO (Incompatível com SM)"
 
-    # Avaliação de Limiares Clínicos do Paciente baseado no NCEP-ATP III
+    # Avaliação de Limiares Clínicos (Estritamente NCEP-ATP III)
     glicemia = dados_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_brutos else None
     cintura = dados_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_brutos else None
     trig = dados_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_brutos else None
     hdl = dados_brutos['HDL'].values[0] if 'HDL' in dados_brutos else None
-    idade = dados_brutos['Age'].values[0] if 'Age' in dados_brutos else None
 
     alertas_clinicos = []
-    if glicemia and glicemia >= 100: alertas_clinicos.append(f"Hiperglicemia de Jejum ({glicemia:.1f} mg/dL)")
-    if cintura and cintura >= 88: alertas_clinicos.append(f"Obesidade Abdominal/Visceral ({cintura:.1f} cm)")
+    if glicemia and glicemia >= 100: alertas_clinicos.append(f"Hiperglicemia ({glicemia:.1f} mg/dL)")
+    if cintura and cintura >= 88: alertas_clinicos.append(f"Cintura Elevada ({cintura:.1f} cm)")
     if trig and trig >= 150: alertas_clinicos.append(f"Hipertrigliceridemia ({trig:.1f} mg/dL)")
-    if hdl and hdl < 50: alertas_clinicos.append(f"Redução de Colesterol protetor HDL ({hdl:.1f} mg/dL)")
+    if hdl and hdl < 50: alertas_clinicos.append(f"HDL Baixo ({hdl:.1f} mg/dL)")
 
     texto_laudo = f"""
-    ##### 📋 Laudo Computacional de Auditoria Médica e Conduta
+    ##### 📋 Laudo Fisiopatológico Base (Segundo a NCEP-ATP III)
+    **1. Rastreio de Limiares Diretos:**
+    Avaliando estritamente os pontos de corte da diretriz internacional preenchidos pelo paciente, observam-se os seguintes alertas ortódoxos ativados:
+    {", ".join(alertas_clinicos) if alertas_clinicos else "✅ *Nenhum limiar patológico clássico (Glicose, Cintura, HDL ou Triglicerídeos) foi ultrapassado de forma isolada.*"}
+    
+    ---
 
-    **1. Impressão Diagnóstica do Sistema:**
-    O paciente apresenta um risco exato de **{prob_shap:.1f}%** de enquadramento na Síndrome Metabólica segundo o modelo `{tipo_modelo}`. Esta assinatura matemática é classificada como **{status_diag}**.
-
-    **2. Correlação Fisiopatológica Local (Justificativa dos Explicadores XAI):**
-    * **Fatores Agravantes Relevantes (SHAP/LIME):** Os biomarcadores que mais impulsionaram o escore de risco para cima foram {", ".join([f"`{f}`" for f in fatores_risco])}. Clinicamente, isto correlaciona-se com a presença observada de: {", ".join(alertas_clinicos) if alertas_clinicos else "Nenhum limiar crítico ultrapassado"}.
-    * **Fatores de Atenuação:** Os parâmetros que atuaram como protetores biológicos, reduzindo a força do diagnóstico, foram {", ".join([f"`{f}`" for f in fatores_protecao])}.
-
-    **3. Parecer de Confiabilidade Teórica (Fidelidade Local):**
-    A aproximação linear local calculada pelo LIME apresenta uma concordância de **{fidelidade:.1f}%** em relação ao modelo principal. {"Esta alta convergência valida a fidelidade da explicação e garante robustez para o isolamento dos pesos clínicos." if fidelidade >= 85.0 else "Existe uma divergência marginal decorrente das complexas interações não-lineares do modelo principal; recomenda-se priorizar o gráfico em Cascata (SHAP) para mapeamento exato dos efeitos marginais."}
-
-    **4. Conduta e Recomendações Clínicas Sugeridas:**
-    {"⚠️ **Intervenção Terapêutica Estruturada:** Recomenda-se triagem confirmatória imediata (solicitação de Hemoglobina Glicada, Perfil Lipídico seriado e monitoramento de pressão arterial). Recomenda-se forte abordagem na mudança de estilo de vida, focando em restrição dietética de carboidratos simples para controle glicêmico e manejo da adiposidade visceral." if prob_shap >= 50.0 else "✅ **Manutenção Preventiva:** O quadro clínico atual não preenche os critérios coletivos de urgência metabólica. Sugere-se manutenção de hábitos de vida saudáveis e reavaliação ambulatorial de rotina."}
+    ##### 🧠 Auditoria Explicável do Algoritmo (Visão Multidimensional Holística)
+    **2. Diagnóstico Sistêmico da IA:**
+    Avaliando **todas** as características simultaneamente, o paciente apresenta um risco consolidado de **{prob_shap:.1f}%** pelo modelo `{tipo_modelo}` (**{status_diag}**).
+    
+    **3. Mapeamento de Fatores (Incluindo Sociais e Secundários):**
+    Diferente da diretriz que exige o corte exato, a IA pesou todo o perfil contínuo e demográfico:
+    * **Agravantes Holísticos:** As variáveis que mais somaram risco matemático para este paciente específico foram: {", ".join([f"`{f}`" for f in fatores_risco_todos])}.
+    * **Protetores Holísticos:** Os atributos estruturais que agiram como "escudo" metabólico, puxando o risco probabilístico para baixo, foram: {", ".join([f"`{f}`" for f in fatores_protecao_todos])}.
+    
+    **4. Parecer de Fidelidade do XAI:**
+    A aproximação LIME concorda em **{fidelidade:.1f}%** com a rede principal. {"A alta fidelidade permite extrema confiança na interpretação linear dos pesos associados ao paciente." if fidelidade >= 85.0 else "Recomenda-se analisar cuidadosamente o gráfico Cascata (SHAP), dado que as variáveis secundárias deste paciente interagem de forma complexa e não-linear."}
+    
+    **5. Conduta e Recomendações Integradas:**
+    {"⚠️ **Intervenção:** Considerando a matemática preditiva de alto risco baseada em todo o conjunto de dados (além dos exames de sangue), recomenda-se profunda adequação alimentar e de exercícios físicos, monitorando também as variáveis secundárias apontadas." if prob_shap >= 50.0 else "✅ **Manutenção:** Apesar das pequenas variações individuais nos exames, a matriz algorítmica aponta segurança metabólica. Recomenda-se manutenção da rotina de saúde."}
     """
     return texto_laudo
 
@@ -100,12 +111,12 @@ def preparar_modelos_e_xai(_X, _y):
 
     explainer_dt = shap.TreeExplainer(modelo_dt)
     shap_values_dt = explainer_dt(X_scaled_df)
-    shap_values_dt.data = _X.values
+    shap_values_dt.data = _X.values 
     pfi_dt = permutation_importance(modelo_dt, X_scaled_df, _y, n_repeats=5, random_state=42)
 
     explainer_cat = shap.TreeExplainer(modelo_cat)
     shap_values_cat = explainer_cat(X_scaled_df)
-    shap_values_cat.data = _X.values
+    shap_values_cat.data = _X.values 
     pfi_cat = permutation_importance(modelo_cat, X_scaled_df, _y, n_repeats=5, random_state=42)
 
     explainer_lime = lime.lime_tabular.LimeTabularExplainer(
@@ -178,7 +189,7 @@ def formatar_label_paciente(seqn_val):
 
 pacientes_disponiveis = df['seqn'].unique()
 paciente_selecionado = st.selectbox(
-    "Selecione o paciente para auditoria:",
+    "Selecione o paciente para auditoria:", 
     options=pacientes_disponiveis,
     format_func=formatar_label_paciente
 )
@@ -188,8 +199,8 @@ dados_paciente_brutos = X.iloc[[idx_paciente]]
 dados_paciente_escalonados = scaler.transform(dados_paciente_brutos)
 
 exp_lime = explainer_lime.explain_instance(
-    dados_paciente_escalonados[0],
-    modelo_ativo.predict_proba,
+    dados_paciente_escalonados[0], 
+    modelo_ativo.predict_proba, 
     num_features=8
 )
 
@@ -243,22 +254,22 @@ st.write("Insira os parâmetros clínicos e laboratoriais abaixo para gerar um d
 
 with st.form("form_novo_paciente"):
     inp_col1, inp_col2, inp_col3, inp_col4 = st.columns(4)
-
+    
     with inp_col1:
         age_in = st.number_input("Idade (Anos):", min_value=0, max_value=120, value=None)
         sex_in = st.selectbox("Sexo Biológico:", ["Masculino", "Feminino"], index=None)
         marital_in = st.selectbox("Estado Civil:", ["Married", "Single", "Separated", "Widowed", "Divorced/Other"], index=None)
-
+    
     with inp_col2:
         income_in = st.number_input("Renda Anual (USD):", min_value=0, max_value=500000, value=None, step=1000)
         race_in = st.selectbox("Raça/Etnia:", ["Asian", "Black", "Hispanic", "MexAmerican", "White", "Other"], index=None)
         waist_in = st.number_input("Cintura (cm):", min_value=30.0, max_value=200.0, value=None, step=0.5)
-
+    
     with inp_col3:
         bmi_in = st.number_input("IMC:", min_value=10.0, max_value=80.0, value=None, step=0.1)
         blood_in = st.number_input("Glicemia de Jejum (mg/dL):", min_value=30.0, max_value=500.0, value=None, step=1.0)
         hdl_in = st.number_input("Colesterol HDL (mg/dL):", min_value=5.0, max_value=150.0, value=None, step=1.0)
-
+    
     with inp_col4:
         tri_in = st.number_input("Triglicerídeos (mg/dL):", min_value=10.0, max_value=1000.0, value=None, step=1.0)
         uric_in = st.number_input("Ácido Úrico (mg/dL):", min_value=1.0, max_value=20.0, value=None, step=0.1)
@@ -269,7 +280,7 @@ with st.form("form_novo_paciente"):
 
 if submitted:
     variaveis_entrada = [age_in, sex_in, marital_in, income_in, race_in, waist_in, bmi_in, blood_in, hdl_in, tri_in, uric_in, alb_in, uralb_in]
-
+    
     if None in variaveis_entrada:
         st.warning("⚠️ Atenção: Por favor, preencha todos os campos do formulário antes de gerar o laudo.")
     else:
@@ -300,20 +311,20 @@ if submitted:
 
         st.markdown("### 📊 Laudo e Auditoria do Novo Paciente")
         p_new_shap = modelo_ativo.predict_proba(df_novo_escalonado)[0][1] * 100
-
+        
         exp_lime_new = explainer_lime.explain_instance(df_novo_escalonado[0], modelo_ativo.predict_proba, num_features=8)
         try:
             p_new_lime = max(0.0, min(100.0, exp_lime_new.local_pred[0] * 100))
         except:
             p_new_lime = p_new_shap
-
+            
         erro_new_lime = abs(p_new_shap - p_new_lime)
         fidelidade_new_xai = 100.0 - erro_new_lime
 
         col_nprob1, col_nprob2, col_nprob3 = st.columns(3)
         col_nprob1.metric(label="Risco pelo Modelo (SHAP)", value=f"{p_new_shap:.1f}%")
         col_nprob2.metric(label="Aproximação Substituto (LIME)", value=f"{p_new_lime:.1f}%")
-
+        
         if fidelidade_new_xai >= 90.0:
             st.success(f"Fidelidade da Explicação: {fidelidade_new_xai:.1f}% (Alta)")
         elif fidelidade_new_xai >= 75.0:
@@ -328,12 +339,12 @@ if submitted:
                 shap_values_new = explainer_ativo(df_novo_escalonado)[0]
             else:
                 shap_values_new = explainer_ativo(df_novo_escalonado)[:, :, 1][0]
-
+                
             shap_values_new.data = df_novo_bruto.values[0]
             fig_new_shap, ax_new_shap = plt.subplots(figsize=(5, 4))
             shap.plots.waterfall(shap_values_new, show=False)
             st.pyplot(fig_new_shap)
-
+            
         with col_nplots2:
             st.markdown("**LIME Explanation Plot**")
             fig_new_lime = exp_lime_new.as_pyplot_figure()
