@@ -65,13 +65,13 @@ def gerar_laudo_global(pfi_ativo, feature_names):
 
     texto_classico = f"""
     **🩺 Validação Biológica e Alinhamento de Diretrizes (NCEP-ATP III)**
-    O mapeamento de relevância global confirma que o motor preditivo ancorou a sua matemática na fisiopatologia real. Variáveis clássicas de resistência insulínica e dislipidemia, como {", ".join([f"*{f}*" for f in alinhados_pt])}, assumem o topo da importância preditiva. Isto confere extrema segurança médica ao modelo, provando que este não memorizou ruídos, mas sim marcadores clínicos validados.
+    O mapeamento de relevância global confirma que o motor preditivo ancorou a sua matemática na fisiopatologia real. Variáveis clássicas de resistência insulínica e dislipidemia, como {", ".join([f"**{f}**" for f in alinhados_pt])}, assumem o topo da importância preditiva. Isto confere extrema segurança médica ao modelo, provando que este não memorizou ruídos, mas sim marcadores clínicos validados.
     *(Nota de Limitação: O critério de Pressão Arterial da diretriz NCEP-ATP III não compõe a matriz devido a restrições na base original).*
     """
     
     texto_holistico = f"""
     **🧠 Descoberta de Padrões e Visão Holística da Máquina**
-    Expandindo a auditoria para todas as variáveis, nota-se que a Inteligência Artificial capturou sinais vitais além das diretrizes rígidas. Preditores secundários e estruturais como {", ".join([f"`{f}`" for f in nao_classicos_pt])} revelaram forte poder de separação. O algoritmo demonstra capacidade de prever a deterioração sistêmica analisando a interação contínua destes fatores periféricos, mesmo antes de os exames de sangue clássicos estourarem os limites patológicos.
+    Expandindo a auditoria para todas as variáveis, nota-se que a Inteligência Artificial capturou sinais vitais além das diretrizes rígidas. Preditores secundários e estruturais como {", ".join([f"**{f}**" for f in nao_classicos_pt])} revelaram forte poder de separação. O algoritmo demonstra capacidade de prever a deterioração sistêmica analisando a interação contínua destes fatores periféricos, mesmo antes de os exames de sangue clássicos estourarem os limites patológicos.
     """
     
     return {'classico': texto_classico, 'holistico': texto_holistico}
@@ -115,8 +115,8 @@ def gerar_laudo_local(dados_brutos, prob_shap, prob_lime, fidelidade, shap_value
     texto_ia = f"""
     **🤖 Auditoria Multidimensional (Explicabilidade Algorítmica)**
     Analisando simultaneamente a complexidade contínua de todo o perfil biológico e socioeconômico, a IA estabeleceu uma assinatura de **{prob_shap:.1f}%** de Risco ({status_diag}).
-    * **Principais Agravantes Sistêmicos:** {", ".join([f"`{f}`" for f in fatores_risco_todos])}.
-    * **Escudos Biológicos (Protetores):** {", ".join([f"`{f}`" for f in fatores_protecao_todos])}.
+    * **Principais Agravantes Sistêmicos:** {", ".join([f"**{f}**" for f in fatores_risco_todos])}.
+    * **Escudos Biológicos (Protetores):** {", ".join([f"**{f}**" for f in fatores_protecao_todos])}.
     """
 
     texto_conduta = f"""
