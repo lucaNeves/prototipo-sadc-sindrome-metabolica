@@ -14,15 +14,40 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
 st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
 
-# 1.1 CONFIGURAÇÃO DA API DO GEMINI (SECRETS DO STREAMLIT)
-# Para funcionar online, configure a chave GEMINI_API_KEY no painel do Streamlit Cloud
+# 1.1 CONFIGURAÇÃO DA API E AUTO-DESCOBERTA DE MODELO
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     llm_disponivel = True
 except Exception:
     llm_disponivel = False
 
-# DICIONÁRIO DE TRADUÇÃO PARA ENVIAR AO LLM E EXIBIR NO LAUDO
+@st.cache_resource
+def obter_modelo_gemini():
+    """Motor de Auto-Descoberta: Busca o melhor modelo disponível para a chave fornecida"""
+    if not llm_disponivel:
+        return None
+    try:
+        # Pede ao Google a lista de todos os modelos que a sua chave tem permissão para usar
+        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Ordem de preferência de modelos (do mais rápido/novo para o mais clássico)
+        preferencias = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-1.0-pro', 'models/gemini-pro']
+        
+        for pref in preferencias:
+            if pref in modelos_disponiveis:
+                nome_limpo = pref.replace("models/", "")
+                return genai.GenerativeModel(nome_limpo)
+        
+        # Se nenhum da lista de preferência existir, pega o primeiro gerador de texto válido que retornar
+        if modelos_disponiveis:
+            nome_limpo = modelos_disponiveis[0].replace("models/", "")
+            return genai.GenerativeModel(nome_limpo)
+            
+        return None
+    except Exception:
+        return None
+
+# DICIONÁRIO DE TRADUÇÃO PARA OS LAUDOS
 DICIONARIO_PT = {
     'WaistCirc': 'Circunferência da Cintura (WaistCirc)',
     'BloodGlucose': 'Glicemia de Jejum (BloodGlucose)',
@@ -59,8 +84,9 @@ def carregar_dados():
 
 # 3. MOTORES DE INTEGRAÇÃO COM IA GENERATIVA (LLM)
 def chamar_gemini_global(top_features_pt, nao_classicos_pt):
-    if not llm_disponivel:
-        return "⚠️ Erro de Configuração: API Key do Gemini não encontrada nos Secrets do Streamlit."
+    model = obter_modelo_gemini()
+    if not model:
+        return "⚠️ Erro: Nenhum modelo Gemini compatível encontrado ou falha na API Key."
         
     prompt = f"""
     Você é um endocrinologista sênior e especialista em Inteligência Artificial em Saúde.
@@ -76,16 +102,16 @@ def chamar_gemini_global(top_features_pt, nao_classicos_pt):
     - Resposta sucinta, estruturada em parágrafos limpos.
     """
     try:
-        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"Erro na chamada da API do Gemini: {str(e)}"
+        return f"Erro na chamada da API: {str(e)}"
 
 def chamar_gemini_local(prob_shap, alertas_clinicos, fatores_risco_todos, fatores_protecao_todos, fidelidade, tipo_modelo):
-    if not llm_disponivel:
+    model = obter_modelo_gemini()
+    if not model:
         return {
-            'laudo': "⚠️ Erro de Configuração: API Key do Gemini não encontrada nos Secrets.",
+            'laudo': "⚠️ Erro: Nenhum modelo Gemini compatível encontrado ou falha na API Key.",
             'alto_risco': prob_shap >= 50.0,
             'tem_alertas': len(alertas_clinicos) > 0
         }
@@ -109,12 +135,11 @@ def chamar_gemini_local(prob_shap, alertas_clinicos, fatores_risco_todos, fatore
     3. **⚕️ Conduta Médica Sugerida e Confiabilidade XAI**: Sugira uma conduta prudente baseada no nível de risco (MEV, propedêutica clínica como aferição de pressão arterial e exames lipidêmicos complementares). Avalie também a confiabilidade do LIME com base no grau de fidelidade fornecido (se for menor que 85%, alerte o clínico para focar no SHAP Waterfall).
 
     Regras de Redação:
-    - Linguagem extremamente técnica, sóbria, sem termos alarmistas (não use termos como 'falência iminente' ou 'escudo biológico').
+    - Linguagem extremamente técnica, sóbria, sem termos alarmistas.
     - O texto deve demonstrar honestidade algorítmica, deixando claro que o software sugere risco estatístico e apoia o julgamento soberano do médico.
     - Retorne as seções de forma clara utilizando os títulos propostos em negrito.
     """
     try:
-        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
         return {
             'laudo': response.text,
@@ -123,7 +148,7 @@ def chamar_gemini_local(prob_shap, alertas_clinicos, fatores_risco_todos, fatore
         }
     except Exception as e:
         return {
-            'laudo': f"Erro na chamada da API do Gemini: {str(e)}",
+            'laudo': f"Erro na chamada da API: {str(e)}",
             'alto_risco': prob_shap >= 50.0,
             'tem_alertas': len(alertas_clinicos) > 0
         }
@@ -203,7 +228,7 @@ with col_global_2:
     st.pyplot(fig_pfi)
 
 # GERAÇÃO DO LAUDO GLOBAL VIA GEMINI
-with st.spinner("O LLM está gerando o parecer analítico global de diretrizes..."):
+with st.spinner("O Sistema está gerando o parecer analítico global de diretrizes..."):
     importances = pfi_ativo.importances_mean
     indices = np.argsort(importances)[::-1]
     top_features = [X.columns[i] for i in indices[:6]]
@@ -302,10 +327,9 @@ if cintura and cintura >= 88: alertas_c.append(f"Circunferência da Cintura: {ci
 if trig and trig >= 150: alertas_c.append(f"Triglicerídeos: {trig:.1f} mg/dL")
 if hdl and hdl < 50: alertas_c.append(f"HDL: {hdl:.1f} mg/dL")
 
-with st.spinner("O LLM está gerando o parecer clínico individualizado..."):
+with st.spinner("A IA está gerando o parecer clínico individualizado..."):
     resultado_llm_local = chamar_gemini_local(prob_shap, alertas_c, fr_todos, fp_todos, fidelidade_xai, tipo_modelo)
     
-    # Renderização Condicional Inteligente baseada no Output da IA
     if resultado_llm_local['alto_risco']:
         st.error(resultado_llm_local['laudo'])
     elif resultado_llm_local['tem_alertas']:
@@ -433,7 +457,7 @@ if submitted:
         if tri_in and tri_in >= 150: alertas_new.append(f"Triglicerídeos: {tri_in:.1f} mg/dL")
         if hdl_in and hdl_in < 50: alertas_new.append(f"HDL: {hdl_in:.1f} mg/dL")
 
-        with st.spinner("O Gemini está consolidando o laudo clínico em tempo real..."):
+        with st.spinner("A IA está consolidando o laudo clínico em tempo real..."):
             laudo_simulador = chamar_gemini_local(p_new_shap, alertas_new, fr_new, fp_new, fidelidade_new_xai, tipo_modelo)
             
             if laudo_simulador['alto_risco']:
