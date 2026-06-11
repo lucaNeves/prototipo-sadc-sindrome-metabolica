@@ -76,7 +76,7 @@ def chamar_gemini_global(top_features_pt, nao_classicos_pt):
     - Resposta sucinta, estruturada em parágrafos limpos.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
@@ -114,7 +114,7 @@ def chamar_gemini_local(prob_shap, alertas_clinicos, fatores_risco_todos, fatore
     - Retorne as seções de forma clara utilizando os títulos propostos em negrito.
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return {
             'laudo': response.text,
