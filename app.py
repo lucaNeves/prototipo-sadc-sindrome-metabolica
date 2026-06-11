@@ -26,20 +26,28 @@ def obter_modelo_gemini():
     if not llm_disponivel:
         return None
     try:
+        # Pega a lista EXATA de modelos disponíveis para a sua chave
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # REMOVIDO o 2.5 e o 1.5-pro para evitar o erro de Quota 429. 
-        # O 1.5-flash tem cota de 1.500 requisições/dia.
-        preferencias = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-pro']
+        if not modelos_disponiveis:
+            return None
+            
+        # 1. Procura dinamicamente por qualquer variação do 1.5-flash (alta cota de laudos)
+        for m in modelos_disponiveis:
+            if '1.5-flash' in m:
+                return genai.GenerativeModel(m.replace("models/", ""))
+                
+        # 2. Se não encontrar, tenta a família 1.0 ou versões pro
+        for m in modelos_disponiveis:
+            if 'gemini-pro' in m or '1.0-pro' in m:
+                return genai.GenerativeModel(m.replace("models/", ""))
+                
+        # 3. Se a sua chave só tiver o 2.5-flash ou outros, pega o primeiro válido matematicamente!
+        nome_limpo = modelos_disponiveis[0].replace("models/", "")
+        return genai.GenerativeModel(nome_limpo)
         
-        for pref in preferencias:
-            if pref in modelos_disponiveis:
-                nome_limpo = pref.replace("models/", "")
-                return genai.GenerativeModel(nome_limpo)
-        
-        return genai.GenerativeModel('gemini-1.5-flash') # Força o modelo seguro caso a lista falhe
     except Exception:
-        return genai.GenerativeModel('gemini-1.5-flash')
+        return None
 
 # DICIONÁRIO DE TRADUÇÃO PARA OS LAUDOS
 DICIONARIO_PT = {
@@ -138,13 +146,13 @@ def gerar_laudo_local_classico(dados_brutos, prob_shap, prob_lime, fidelidade, s
     return {'classico': texto_classico, 'ia': texto_ia, 'conduta': texto_conduta, 'tem_alertas': tem_alertas, 'alto_risco': alto_risco}
 
 # ========================================================
-# MOTORES DE IA GENERATIVA COM CACHE (LLM GEMINI) E PROTEÇÃO 429
+# MOTORES DE IA GENERATIVA COM CACHE (LLM GEMINI)
 # ========================================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def chamar_gemini_global(top_features_str, nao_classicos_str):
     model = obter_modelo_gemini()
     if not model:
-        return "⚠️ Erro: Falha de conexão com a API do Gemini."
+        return "⚠️ Erro: Falha de conexão com a API do Gemini. Verifique as configurações (Secrets)."
         
     prompt = f"""
     Você é um endocrinologista sênior especialista em IA. Analise o comportamento global deste modelo de Machine Learning para Síndrome Metabólica.
@@ -157,7 +165,7 @@ def chamar_gemini_global(top_features_str, nao_classicos_str):
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "Quota" in erro_str:
-            return "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de laudos simultâneos foi atingido na versão gratuita. Aguarde cerca de 60 segundos e tente novamente."
+            return "⏳ **Sistema em Resfriamento.** O limite de laudos simultâneos foi atingido na versão gratuita da IA. Aguarde cerca de 60 segundos e tente novamente."
         return f"⚠️ Erro na chamada da API: {erro_str}"
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -185,10 +193,9 @@ def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str,
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "Quota" in erro_str:
-            mensagem = "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de requisições por minuto foi atingido. Aguarde cerca de 60 segundos e alterne a aba para gerar o laudo novamente."
+            mensagem = "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de requisições do Gemini foi atingido. Aguarde cerca de 60 segundos e alterne a aba para gerar o laudo novamente."
         else:
             mensagem = f"⚠️ Erro de processamento da IA: {erro_str}"
-        
         return {'laudo': mensagem, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
 
 # 4. PREPARAÇÃO DOS MODELOS E EXPLICADORES
@@ -282,7 +289,6 @@ with aba1_ia:
         
         laudo_global_texto = chamar_gemini_global(traduzir_e_juntar(alinhados), traduzir_e_juntar(nao_classicos))
         
-        # Tratamento visual da resposta para manter padrão de cores em caso de erro 429
         if "⏳" in laudo_global_texto:
             st.warning(laudo_global_texto)
         else:
@@ -508,7 +514,6 @@ if submitted:
 
             with st.spinner("A IA está a consolidar o laudo clínico..."):
                 laudo_simulador = chamar_gemini_local(p_new_shap, status_risco_new, str_alertas_new, str_fr_new, str_fp_new, fidelidade_new_xai, tipo_modelo)
-                
                 if "⏳" in laudo_simulador['laudo']:
                     st.warning(laudo_simulador['laudo'])
                 else:
