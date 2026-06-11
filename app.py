@@ -14,7 +14,7 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
 st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
 
-# 1.1 CONFIGURAÇÃO DA API E AUTO-DESCOBERTA DE MODELO
+# 1.1 CONFIGURAÇÃO DA API E AUTO-DESCOBERTA DE MODELO BLINDADA
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     llm_disponivel = True
@@ -27,19 +27,19 @@ def obter_modelo_gemini():
         return None
     try:
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        preferencias = ['models/gemini-1.5-flash', 'models/gemini-2.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
+        
+        # REMOVIDO o 2.5 e o 1.5-pro para evitar o erro de Quota 429. 
+        # O 1.5-flash tem cota de 1.500 requisições/dia.
+        preferencias = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-8b', 'models/gemini-pro']
         
         for pref in preferencias:
             if pref in modelos_disponiveis:
                 nome_limpo = pref.replace("models/", "")
                 return genai.GenerativeModel(nome_limpo)
         
-        if modelos_disponiveis:
-            nome_limpo = modelos_disponiveis[0].replace("models/", "")
-            return genai.GenerativeModel(nome_limpo)
-        return None
+        return genai.GenerativeModel('gemini-1.5-flash') # Força o modelo seguro caso a lista falhe
     except Exception:
-        return None
+        return genai.GenerativeModel('gemini-1.5-flash')
 
 # DICIONÁRIO DE TRADUÇÃO PARA OS LAUDOS
 DICIONARIO_PT = {
@@ -138,7 +138,7 @@ def gerar_laudo_local_classico(dados_brutos, prob_shap, prob_lime, fidelidade, s
     return {'classico': texto_classico, 'ia': texto_ia, 'conduta': texto_conduta, 'tem_alertas': tem_alertas, 'alto_risco': alto_risco}
 
 # ========================================================
-# MOTORES DE IA GENERATIVA COM CACHE (LLM GEMINI)
+# MOTORES DE IA GENERATIVA COM CACHE (LLM GEMINI) E PROTEÇÃO 429
 # ========================================================
 @st.cache_data(show_spinner=False, ttl=3600)
 def chamar_gemini_global(top_features_str, nao_classicos_str):
@@ -155,7 +155,10 @@ def chamar_gemini_global(top_features_str, nao_classicos_str):
     try:
         return model.generate_content(prompt).text
     except Exception as e:
-        return f"Erro na chamada da API: {str(e)}"
+        erro_str = str(e)
+        if "429" in erro_str or "Quota" in erro_str:
+            return "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de laudos simultâneos foi atingido na versão gratuita. Aguarde cerca de 60 segundos e tente novamente."
+        return f"⚠️ Erro na chamada da API: {erro_str}"
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str, fatores_protecao_str, fidelidade, tipo_modelo):
@@ -180,7 +183,13 @@ def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str,
     try:
         return {'laudo': model.generate_content(prompt).text, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
     except Exception as e:
-        return {'laudo': f"Erro de processamento da IA: {str(e)}", 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
+        erro_str = str(e)
+        if "429" in erro_str or "Quota" in erro_str:
+            mensagem = "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de requisições por minuto foi atingido. Aguarde cerca de 60 segundos e alterne a aba para gerar o laudo novamente."
+        else:
+            mensagem = f"⚠️ Erro de processamento da IA: {erro_str}"
+        
+        return {'laudo': mensagem, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
 
 # 4. PREPARAÇÃO DOS MODELOS E EXPLICADORES
 @st.cache_resource
@@ -272,7 +281,12 @@ with aba1_ia:
         nao_classicos = [f for f in top_features if f not in criterios_ncep]
         
         laudo_global_texto = chamar_gemini_global(traduzir_e_juntar(alinhados), traduzir_e_juntar(nao_classicos))
-        st.info(laudo_global_texto)
+        
+        # Tratamento visual da resposta para manter padrão de cores em caso de erro 429
+        if "⏳" in laudo_global_texto:
+            st.warning(laudo_global_texto)
+        else:
+            st.info(laudo_global_texto)
 
 st.divider()
 
@@ -368,12 +382,16 @@ with aba2_ia:
 
     with st.spinner("A IA está a gerar o parecer individualizado..."):
         resultado_llm_local = chamar_gemini_local(prob_shap, status_risco, str_alertas, str_fr_todos, str_fp_todos, fidelidade_xai, tipo_modelo)
-        if resultado_llm_local['alto_risco']:
-            st.error(resultado_llm_local['laudo'])
-        elif resultado_llm_local['tem_alertas']:
+        
+        if "⏳" in resultado_llm_local['laudo']:
             st.warning(resultado_llm_local['laudo'])
         else:
-            st.success(resultado_llm_local['laudo'])
+            if resultado_llm_local['alto_risco']:
+                st.error(resultado_llm_local['laudo'])
+            elif resultado_llm_local['tem_alertas']:
+                st.warning(resultado_llm_local['laudo'])
+            else:
+                st.success(resultado_llm_local['laudo'])
 
 st.divider()
 
@@ -490,6 +508,10 @@ if submitted:
 
             with st.spinner("A IA está a consolidar o laudo clínico..."):
                 laudo_simulador = chamar_gemini_local(p_new_shap, status_risco_new, str_alertas_new, str_fr_new, str_fp_new, fidelidade_new_xai, tipo_modelo)
-                if laudo_simulador['alto_risco']: st.error(laudo_simulador['laudo'])
-                elif laudo_simulador['tem_alertas']: st.warning(laudo_simulador['laudo'])
-                else: st.success(laudo_simulador['laudo'])
+                
+                if "⏳" in laudo_simulador['laudo']:
+                    st.warning(laudo_simulador['laudo'])
+                else:
+                    if laudo_simulador['alto_risco']: st.error(laudo_simulador['laudo'])
+                    elif laudo_simulador['tem_alertas']: st.warning(laudo_simulador['laudo'])
+                    else: st.success(laudo_simulador['laudo'])
