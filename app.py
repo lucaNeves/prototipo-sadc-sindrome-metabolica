@@ -14,7 +14,7 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
 st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
 
-# 1.1 CONFIGURAÇÃO DA API E AUTO-DESCOBERTA DE MODELO BLINDADA
+# 1.1 CONFIGURAÇÃO DA API E AUTO-DESCOBERTA DE MODELO
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     llm_disponivel = True
@@ -26,26 +26,20 @@ def obter_modelo_gemini():
     if not llm_disponivel:
         return None
     try:
-        # Pega a lista EXATA de modelos disponíveis para a sua chave
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        if not modelos_disponiveis:
-            return None
-            
-        # 1. Procura dinamicamente por qualquer variação do 1.5-flash (alta cota de laudos)
-        for m in modelos_disponiveis:
-            if '1.5-flash' in m:
-                return genai.GenerativeModel(m.replace("models/", ""))
-                
-        # 2. Se não encontrar, tenta a família 1.0 ou versões pro
-        for m in modelos_disponiveis:
-            if 'gemini-pro' in m or '1.0-pro' in m:
-                return genai.GenerativeModel(m.replace("models/", ""))
-                
-        # 3. Se a sua chave só tiver o 2.5-flash ou outros, pega o primeiro válido matematicamente!
-        nome_limpo = modelos_disponiveis[0].replace("models/", "")
-        return genai.GenerativeModel(nome_limpo)
+        # O modelo 2.5-flash foi recolocado como prioridade a pedido do utilizador
+        preferencias = ['models/gemini-2.5-flash', 'models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']
         
+        for pref in preferencias:
+            if pref in modelos_disponiveis:
+                nome_limpo = pref.replace("models/", "")
+                return genai.GenerativeModel(nome_limpo)
+        
+        if modelos_disponiveis:
+            nome_limpo = modelos_disponiveis[0].replace("models/", "")
+            return genai.GenerativeModel(nome_limpo)
+        return None
     except Exception:
         return None
 
@@ -165,7 +159,7 @@ def chamar_gemini_global(top_features_str, nao_classicos_str):
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "Quota" in erro_str:
-            return "⏳ **Sistema em Resfriamento.** O limite de laudos simultâneos foi atingido na versão gratuita da IA. Aguarde cerca de 60 segundos e tente novamente."
+            return "⏳ **Sistema em Resfriamento.** O limite de laudos simultâneos foi atingido. Aguarde cerca de 60 segundos e tente novamente."
         return f"⚠️ Erro na chamada da API: {erro_str}"
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -193,7 +187,7 @@ def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str,
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "Quota" in erro_str:
-            mensagem = "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de requisições do Gemini foi atingido. Aguarde cerca de 60 segundos e alterne a aba para gerar o laudo novamente."
+            mensagem = "⏳ **Sistema em Resfriamento (Proteção Anti-Spam).** O limite de requisições do Gemini foi atingido. Aguarde e clique novamente."
         else:
             mensagem = f"⚠️ Erro de processamento da IA: {erro_str}"
         return {'laudo': mensagem, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
@@ -278,21 +272,25 @@ with aba1_trad:
     st.info(laudos_globais_classicos['holistico'])    
 
 with aba1_ia:
-    with st.spinner("A IA está a redigir o parecer analítico global..."):
-        importances = pfi_ativo.importances_mean
-        indices = np.argsort(importances)[::-1]
-        top_features = [X.columns[i] for i in indices[:6]]
-        criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
-        
-        alinhados = [f for f in top_features if f in criterios_ncep]
-        nao_classicos = [f for f in top_features if f not in criterios_ncep]
-        
-        laudo_global_texto = chamar_gemini_global(traduzir_e_juntar(alinhados), traduzir_e_juntar(nao_classicos))
-        
-        if "⏳" in laudo_global_texto:
-            st.warning(laudo_global_texto)
-        else:
-            st.info(laudo_global_texto)
+    # BOTÃO SOB DEMANDA PARA A SECÇÃO 1
+    if st.button("✨ Gerar Parecer Analítico Global com IA", key="btn_ia_global"):
+        with st.spinner("A IA está a redigir o parecer analítico global..."):
+            importances = pfi_ativo.importances_mean
+            indices = np.argsort(importances)[::-1]
+            top_features = [X.columns[i] for i in indices[:6]]
+            criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
+            
+            alinhados = [f for f in top_features if f in criterios_ncep]
+            nao_classicos = [f for f in top_features if f not in criterios_ncep]
+            
+            laudo_global_texto = chamar_gemini_global(traduzir_e_juntar(alinhados), traduzir_e_juntar(nao_classicos))
+            
+            if "⏳" in laudo_global_texto:
+                st.warning(laudo_global_texto)
+            else:
+                st.info(laudo_global_texto)
+    else:
+        st.info("👆 Clique no botão acima para solicitar a análise global por Inteligência Artificial (Consome cota da API).")
 
 st.divider()
 
@@ -367,37 +365,41 @@ with aba2_trad:
         st.success(laudos_locais_classico['conduta'])
 
 with aba2_ia:
-    colunas = X.columns.tolist()
-    idx_positivos = np.argsort(valores_shap)[::-1]
-    idx_negativos = np.argsort(valores_shap)
-    str_fr_todos = traduzir_e_juntar([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
-    str_fp_todos = traduzir_e_juntar([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
+    # BOTÃO SOB DEMANDA PARA A SECÇÃO 2 (Chave dinâmica para resetar ao trocar de paciente)
+    if st.button("✨ Gerar Parecer Clínico Individual com IA", key=f"btn_ia_local_{paciente_selecionado}"):
+        colunas = X.columns.tolist()
+        idx_positivos = np.argsort(valores_shap)[::-1]
+        idx_negativos = np.argsort(valores_shap)
+        str_fr_todos = traduzir_e_juntar([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
+        str_fp_todos = traduzir_e_juntar([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
 
-    glicemia = dados_paciente_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_paciente_brutos else None
-    cintura = dados_paciente_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_paciente_brutos else None
-    trig = dados_paciente_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_paciente_brutos else None
-    hdl = dados_paciente_brutos['HDL'].values[0] if 'HDL' in dados_paciente_brutos else None
+        glicemia = dados_paciente_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_paciente_brutos else None
+        cintura = dados_paciente_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_paciente_brutos else None
+        trig = dados_paciente_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_paciente_brutos else None
+        hdl = dados_paciente_brutos['HDL'].values[0] if 'HDL' in dados_paciente_brutos else None
 
-    alertas_lista = []
-    if glicemia and glicemia >= 100: alertas_lista.append(f"Glicemia: {glicemia:.1f}")
-    if cintura and cintura >= 88: alertas_lista.append(f"Cintura: {cintura:.1f}")
-    if trig and trig >= 150: alertas_lista.append(f"Triglicerídeos: {trig:.1f}")
-    if hdl and hdl < 50: alertas_lista.append(f"HDL: {hdl:.1f}")
-    str_alertas = ", ".join(alertas_lista)
-    status_risco = "RISCO SIGNIFICATIVO" if prob_shap >= 50.0 else "RISCO CONTROLADO"
+        alertas_lista = []
+        if glicemia and glicemia >= 100: alertas_lista.append(f"Glicemia: {glicemia:.1f}")
+        if cintura and cintura >= 88: alertas_lista.append(f"Cintura: {cintura:.1f}")
+        if trig and trig >= 150: alertas_lista.append(f"Triglicerídeos: {trig:.1f}")
+        if hdl and hdl < 50: alertas_lista.append(f"HDL: {hdl:.1f}")
+        str_alertas = ", ".join(alertas_lista)
+        status_risco = "RISCO SIGNIFICATIVO" if prob_shap >= 50.0 else "RISCO CONTROLADO"
 
-    with st.spinner("A IA está a gerar o parecer individualizado..."):
-        resultado_llm_local = chamar_gemini_local(prob_shap, status_risco, str_alertas, str_fr_todos, str_fp_todos, fidelidade_xai, tipo_modelo)
-        
-        if "⏳" in resultado_llm_local['laudo']:
-            st.warning(resultado_llm_local['laudo'])
-        else:
-            if resultado_llm_local['alto_risco']:
-                st.error(resultado_llm_local['laudo'])
-            elif resultado_llm_local['tem_alertas']:
+        with st.spinner("A IA está a gerar o parecer individualizado..."):
+            resultado_llm_local = chamar_gemini_local(prob_shap, status_risco, str_alertas, str_fr_todos, str_fp_todos, fidelidade_xai, tipo_modelo)
+            
+            if "⏳" in resultado_llm_local['laudo']:
                 st.warning(resultado_llm_local['laudo'])
             else:
-                st.success(resultado_llm_local['laudo'])
+                if resultado_llm_local['alto_risco']:
+                    st.error(resultado_llm_local['laudo'])
+                elif resultado_llm_local['tem_alertas']:
+                    st.warning(resultado_llm_local['laudo'])
+                else:
+                    st.success(resultado_llm_local['laudo'])
+    else:
+         st.info("👆 Clique no botão acima para submeter os exames deste paciente para a Inteligência Artificial (Consome cota da API).")
 
 st.divider()
 
@@ -425,6 +427,10 @@ with st.form("form_novo_paciente"):
         alb_in = st.selectbox("Albuminúria (Grau):", [0, 1, 2], index=None)
         uralb_in = st.number_input("Razão Alb/Cr (mg/g):", min_value=0.0, max_value=5000.0, value=None, step=1.0)
 
+    st.markdown("---")
+    st.markdown("**Opções Avançadas:**")
+    usar_ia_simulador = st.checkbox("🤖 Incluir Auditoria Textual com IA Generativa (Consome cota da API)")
+    
     submitted = st.form_submit_button("Gerar Diagnóstico e XAI", type="primary")
 
 if submitted:
@@ -498,25 +504,29 @@ if submitted:
             else: st.success(laudos_sim_classico['conduta'])
 
         with aba3_ia:
-            idx_pos_new = np.argsort(valores_shap_new)[::-1]
-            idx_neg_new = np.argsort(valores_shap_new)
+            # CHECA SE A CAIXA FOI MARCADA NO FORMULÁRIO PARA GERAR A IA
+            if usar_ia_simulador:
+                idx_pos_new = np.argsort(valores_shap_new)[::-1]
+                idx_neg_new = np.argsort(valores_shap_new)
 
-            str_fr_new = traduzir_e_juntar([colunas[i] for i in idx_pos_new if valores_shap_new[i] > 0][:4])
-            str_fp_new = traduzir_e_juntar([colunas[i] for i in idx_neg_new if valores_shap_new[i] < 0][:3])
+                str_fr_new = traduzir_e_juntar([colunas[i] for i in idx_pos_new if valores_shap_new[i] > 0][:4])
+                str_fp_new = traduzir_e_juntar([colunas[i] for i in idx_neg_new if valores_shap_new[i] < 0][:3])
 
-            alertas_new_list = []
-            if blood_in and blood_in >= 100: alertas_new_list.append(f"Glicemia: {blood_in:.1f}")
-            if waist_in and waist_in >= 88: alertas_new_list.append(f"Cintura: {waist_in:.1f}")
-            if tri_in and tri_in >= 150: alertas_new_list.append(f"Triglicerídeos: {tri_in:.1f}")
-            if hdl_in and hdl_in < 50: alertas_new_list.append(f"HDL: {hdl_in:.1f}")
-            str_alertas_new = ", ".join(alertas_new_list)
-            status_risco_new = "RISCO SIGNIFICATIVO" if p_new_shap >= 50.0 else "RISCO CONTROLADO"
+                alertas_new_list = []
+                if blood_in and blood_in >= 100: alertas_new_list.append(f"Glicemia: {blood_in:.1f}")
+                if waist_in and waist_in >= 88: alertas_new_list.append(f"Cintura: {waist_in:.1f}")
+                if tri_in and tri_in >= 150: alertas_new_list.append(f"Triglicerídeos: {tri_in:.1f}")
+                if hdl_in and hdl_in < 50: alertas_new_list.append(f"HDL: {hdl_in:.1f}")
+                str_alertas_new = ", ".join(alertas_new_list)
+                status_risco_new = "RISCO SIGNIFICATIVO" if p_new_shap >= 50.0 else "RISCO CONTROLADO"
 
-            with st.spinner("A IA está a consolidar o laudo clínico..."):
-                laudo_simulador = chamar_gemini_local(p_new_shap, status_risco_new, str_alertas_new, str_fr_new, str_fp_new, fidelidade_new_xai, tipo_modelo)
-                if "⏳" in laudo_simulador['laudo']:
-                    st.warning(laudo_simulador['laudo'])
-                else:
-                    if laudo_simulador['alto_risco']: st.error(laudo_simulador['laudo'])
-                    elif laudo_simulador['tem_alertas']: st.warning(laudo_simulador['laudo'])
-                    else: st.success(laudo_simulador['laudo'])
+                with st.spinner("A IA está a consolidar o laudo clínico..."):
+                    laudo_simulador = chamar_gemini_local(p_new_shap, status_risco_new, str_alertas_new, str_fr_new, str_fp_new, fidelidade_new_xai, tipo_modelo)
+                    if "⏳" in laudo_simulador['laudo']:
+                        st.warning(laudo_simulador['laudo'])
+                    else:
+                        if laudo_simulador['alto_risco']: st.error(laudo_simulador['laudo'])
+                        elif laudo_simulador['tem_alertas']: st.warning(laudo_simulador['laudo'])
+                        else: st.success(laudo_simulador['laudo'])
+            else:
+                st.info("A geração de texto por Inteligência Artificial não foi solicitada no simulador.\n\nPara visualizar este laudo, ative a caixa **'Incluir Auditoria Textual com IA Generativa'** no final do formulário acima e clique em Gerar Diagnóstico novamente.")
