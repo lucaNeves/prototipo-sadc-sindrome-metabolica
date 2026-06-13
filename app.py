@@ -12,7 +12,7 @@ from sklearn.inspection import permutation_importance
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 st.title("🩺 Diagnóstico de Síndrome Metabólica com XAI")
-st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação).")
+st.markdown("Sistema Híbrido de Suporte à Decisão Clínica (SHAP, LIME e Permutação com CatBoost).")
 
 # 1.1 CONFIGURAÇÃO DA API
 try:
@@ -35,9 +35,7 @@ def gerar_conteudo_com_fallback(prompt):
         return "ERRO_CHAVE"
         
     modelos = listar_modelos_gemini()
-    
-    # Ordem: Modelos com cota alta (1500/dia) primeiro. O 2.5-flash (20/dia) fica pro final.
-    preferencias = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro', 'gemini-2.5-flash']
+    preferencias = ['models/gemini-1.5-flash', 'models/gemini-1.0-pro', 'models/gemini-pro', 'models/gemini-1.5-pro', 'models/gemini-2.5-flash']
     
     fila_modelos = [m for m in preferencias if m in modelos]
     for m in modelos:
@@ -49,7 +47,6 @@ def gerar_conteudo_com_fallback(prompt):
         
     teve_cota_excedida = False
     
-    # LOOP DE RESILIÊNCIA: Tenta um por um até funcionar
     for nome_modelo in fila_modelos:
         try:
             modelo = genai.GenerativeModel(nome_modelo)
@@ -59,13 +56,12 @@ def gerar_conteudo_com_fallback(prompt):
             erro_str = str(e)
             if "429" in erro_str or "Quota" in erro_str:
                 teve_cota_excedida = True
-                continue # Cota excedida, tenta o PRÓXIMO modelo silenciosamente
+                continue
             elif "404" in erro_str:
-                continue # Modelo não existe para esta chave, tenta o PRÓXIMO
+                continue
             else:
-                continue # Outro erro, pula para o próximo
+                continue
                 
-    # Se esgotou a lista inteira e não conseguiu
     if teve_cota_excedida:
         return "ESGOTOU_COTA"
     return "ERRO_GERAL"
@@ -186,7 +182,7 @@ def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str,
     texto = gerar_conteudo_com_fallback(prompt)
     if texto in ["ERRO_CHAVE", "ESGOTOU_COTA", "ERRO_GERAL"]:
         mensagem = "⏳ **Cotas da Inteligência Artificial Esgotadas.** A chave do Google excedeu o limite diário. Utilize o **'Laudo Tradicional'** na aba ao lado." if texto == "ESGOTOU_COTA" else "⚠️ Erro de processamento nos servidores LLM."
-        return {'laudo': mensagem, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
+        return {'laudo': message, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
     
     return {'laudo': texto, 'alto_risco': prob_shap >= 50.0, 'tem_alertas': alertas_str != ""}
 
@@ -194,16 +190,10 @@ def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str,
 @st.cache_resource
 def preparar_modelos_e_xai(_X, _y):
     scaler = joblib.load('scaler.pkl')
-    modelo_dt = joblib.load('modelo_dt.pkl')
     modelo_cat = joblib.load('modelo_cat.pkl')
 
     X_scaled = scaler.transform(_X)
     X_scaled_df = pd.DataFrame(X_scaled, columns=_X.columns)
-
-    explainer_dt = shap.TreeExplainer(modelo_dt)
-    shap_values_dt = explainer_dt(X_scaled_df)
-    shap_values_dt.data = _X.values 
-    pfi_dt = permutation_importance(modelo_dt, X_scaled_df, _y, n_repeats=5, random_state=42)
 
     explainer_cat = shap.TreeExplainer(modelo_cat)
     shap_values_cat = explainer_cat(X_scaled_df)
@@ -215,32 +205,22 @@ def preparar_modelos_e_xai(_X, _y):
         mode='classification', random_state=42
     )
 
-    return scaler, modelo_dt, explainer_dt, shap_values_dt, pfi_dt, modelo_cat, explainer_cat, shap_values_cat, pfi_cat, explainer_lime
+    return scaler, modelo_cat, explainer_cat, shap_values_cat, pfi_cat, explainer_lime
 
 df, X, y = carregar_dados()
-scaler, modelo_dt, explainer_dt, shap_values_dt, pfi_dt, modelo_cat, explainer_cat, shap_values_cat, pfi_cat, explainer_lime = preparar_modelos_e_xai(X, y)
+scaler, modelo_cat, explainer_cat, shap_values_cat, pfi_cat, explainer_lime = preparar_modelos_e_xai(X, y)
 
-st.divider()
-
-# 5. INTERFACE DE SELEÇÃO DE MODELOS
-st.subheader("⚙️ Modelo Ativo para Auditoria Explicável (XAI)")
-tipo_modelo = st.selectbox("Escolha qual motor matemático guiará as explicações abaixo:", ["Ensemble (CatBoost)", "Clássico (Árvore de Decisão)"])
-
-if tipo_modelo == "Ensemble (CatBoost)":
-    modelo_ativo = modelo_cat
-    explainer_ativo = explainer_cat
-    shap_values_ativos = shap_values_cat
-    pfi_ativo = pfi_cat
-else:
-    modelo_ativo = modelo_dt
-    explainer_ativo = explainer_dt
-    shap_values_ativos = shap_values_dt[:, :, 1]
-    pfi_ativo = pfi_dt
+# MAPEAMENTO DIRETO DO MODELO CAMPEÃO CATBOOST
+tipo_modelo = "CatBoost"
+modelo_ativo = modelo_cat
+explainer_ativo = explainer_cat
+shap_values_ativos = shap_values_cat
+pfi_ativo = pfi_cat
 
 st.divider()
 
 # --- SECÇÃO 1: GLOBAL ---
-st.header(f"1. Interpretação Global ({tipo_modelo})")
+st.header("1. Interpretação Global (CatBoost)")
 st.write("Análise macroscópica de quais exames guiam o modelo e o impacto de cada variável.")
 
 col_global_1, col_global_2 = st.columns(2)
@@ -305,8 +285,10 @@ dados_paciente_escalonados = scaler.transform(dados_paciente_brutos)
 exp_lime = explainer_lime.explain_instance(dados_paciente_escalonados[0], modelo_ativo.predict_proba, num_features=8)
 prob_shap = modelo_ativo.predict_proba(dados_paciente_escalonados)[0][1] * 100
 
-try: prob_lime = max(0.0, min(100.0, exp_lime.local_pred[0] * 100))
-except: prob_lime = prob_shap
+try: 
+    prob_lime = max(0.0, min(100.0, exp_lime.local_pred[0] * 100))
+except: 
+    prob_lime = prob_shap
 
 fidelidade_xai = 100.0 - abs(prob_shap - prob_lime)
 
@@ -315,8 +297,8 @@ col_prob1, col_prob2, col_prob3 = st.columns(3)
 col_prob1.metric(label="Risco Exato (SHAP / Modelo)", value=f"{prob_shap:.1f}%")
 col_prob2.metric(label="Aproximação LIME", value=f"{prob_lime:.1f}%")
 
-if fidelidade_xai >= 90.0: col_prob3.success(f"Fidelidade XAI: {fidelidade_xai:.1f}% (Alta)")
-elif fidelidade_xai >= 75.0: col_prob3.warning(f"Fidelidade XAI: {fidelidade_xai:.1f}% (Média)")
+if fidelidade_xai >= 90.0: st.success(f"Fidelidade XAI: {fidelidade_xai:.1f}% (Alta)")
+elif fidelidade_xai >= 75.0: st.warning(f"Fidelidade XAI: {fidelidade_xai:.1f}% (Média)")
 else: col_prob3.error(f"Fidelidade XAI: {fidelidade_xai:.1f}% (Baixa)")
 
 col_local_1, col_local_2 = st.columns(2)
@@ -332,7 +314,7 @@ with col_local_2:
     fig_lime.tight_layout()
     st.pyplot(fig_lime)
 
-valores_shap = shap_values_ativos[idx_paciente].values if hasattr(shap_values_ativos[idx_paciente], "values") else shap_values_ativos[idx_paciente] if tipo_modelo == "Ensemble (CatBoost)" else shap_values_dt[:, :, 1][idx_paciente]
+valores_shap = shap_values_ativos[idx_paciente].values if hasattr(shap_values_ativos[idx_paciente], "values") else shap_values_ativos[idx_paciente]
 
 aba2_trad, aba2_ia = st.tabs(["📝 Laudo Tradicional (Regras Estatísticas)", "✨ Laudo IA Generativa (Gemini)"])
 
@@ -434,8 +416,10 @@ if submitted:
         p_new_shap = modelo_ativo.predict_proba(df_novo_escalonado)[0][1] * 100
         
         exp_lime_new = explainer_lime.explain_instance(df_novo_escalonado[0], modelo_ativo.predict_proba, num_features=8)
-        try: p_new_lime = max(0.0, min(100.0, exp_lime_new.local_pred[0] * 100))
-        except: p_new_lime = p_new_shap
+        try: 
+            p_new_lime = max(0.0, min(100.0, exp_lime_new.local_pred[0] * 100))
+        except: 
+            p_new_lime = p_new_shap
             
         fidelidade_new_xai = 100.0 - abs(p_new_shap - p_new_lime)
 
@@ -443,13 +427,13 @@ if submitted:
         col_nprob1.metric(label="Risco (SHAP)", value=f"{p_new_shap:.1f}%")
         col_nprob2.metric(label="Aproximação (LIME)", value=f"{p_new_lime:.1f}%")
         
-        if fidelidade_new_xai >= 90.0: col_nprob3.success(f"Fidelidade: {fidelidade_new_xai:.1f}% (Alta)")
-        else: col_nprob3.warning(f"Fidelidade: {fidelidade_new_xai:.1f}%")
+        if fidelidade_new_xai >= 90.0: st.success(f"Fidelidade: {fidelidade_new_xai:.1f}% (Alta)")
+        else: st.warning(f"Fidelidade: {fidelidade_new_xai:.1f}%")
 
         col_nplots1, col_nplots2 = st.columns(2)
         with col_nplots1:
             st.markdown("**SHAP Waterfall Plot**")
-            shap_values_new = explainer_ativo(df_novo_escalonado)[0] if tipo_modelo == "Ensemble (CatBoost)" else explainer_ativo(df_novo_escalonado)[:, :, 1][0]
+            shap_values_new = explainer_ativo(df_novo_escalonado)[0]
             shap_values_new.data = df_novo_bruto.values[0]
             fig_new_shap, ax_new_shap = plt.subplots(figsize=(5, 4))
             shap.plots.waterfall(shap_values_new, show=False)
