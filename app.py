@@ -222,7 +222,7 @@ def preparar_modelos_e_xai(_X, _y):
     shap_values_cat = explainer_cat(X_scaled_df)
     shap_values_cat.data = _X.values
     
-    # MODIFICAÇÃO CHAVE: Traduz os feature_names diretamente dentro da estrutura interna do objeto SHAP
+    # Traduz os feature_names diretamente dentro da estrutura interna do objeto SHAP
     shap_values_cat.feature_names = [DICIONARIO_PT.get(col, col) for col in _X.columns]
     
     pfi_cat = permutation_importance(modelo_cat, X_scaled_df, _y, n_repeats=5, random_state=42)
@@ -256,6 +256,7 @@ with aba_simulador:
             sex_in = st.selectbox("Sexo Biológico:", ["Masculino", "Feminino"], index=None)
             marital_in = st.selectbox("Estado Civil:", ["Married", "Single", "Separated", "Widowed", "Divorced/Other"], index=None)
         with inp_col2:
+            # Rótulo alterado de "Renda Anual (USD):" para "Renda (USD):" conforme solicitado
             income_in = st.number_input("Renda (USD):", min_value=0, max_value=500000, value=None, step=1000)
             race_in = st.selectbox("Raça/Etnia:", ["Asian", "Black", "Hispanic", "MexAmerican", "White", "Other"], index=None)
             waist_in = st.number_input("Cintura (cm):", min_value=30.0, max_value=200.0, value=None, step=0.5)
@@ -299,7 +300,6 @@ with aba_simulador:
             st.markdown("### 📈 Justificativas Algorítmicas (Matemática)")
             col_nplots1, col_nplots2 = st.columns(2)
             with col_nplots1:
-                # O SHAP Waterfall lê automaticamente os nomes em português do objeto principal
                 fig_new_shap, ax_new_shap = plt.subplots(figsize=(5, 4))
                 shap.plots.waterfall(shap_values_new, show=False)
                 st.pyplot(fig_new_shap)
@@ -349,8 +349,6 @@ with aba_global:
         st.markdown("**1. Quais exames são mais importantes? (Impacto Médio SHAP)**")
         fig_bar, ax_bar = plt.subplots(figsize=(7, 5))
         shap.summary_plot(shap_values_ativos, X_pt, plot_type="bar", show=False, color='#3498db')
-        
-        # MODIFICAÇÃO CHAVE: Força a sobrescrita do rótulo padrão em inglês gerado pelo SHAP
         plt.xlabel("Impacto Médio na Decisão (Valor SHAP Absoluto)")
         st.pyplot(fig_bar)
 
@@ -442,7 +440,7 @@ with aba_local:
                 resultado_llm = chamar_gemini_local(
                     prob_shap_hist, "ALTO RISCO" if prob_shap_hist >= 50 else "BAIXO RISCO", 
                     ", ".join(alertas_lista) if alertas_lista else "Nenhum limiar clássico", 
-                    traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_health[i] > 0][:4]) if 'valores_shap_health' in locals() else traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_hist[i] > 0][:4]), 
+                    traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_hist[i] > 0][:4]), 
                     traduzir_e_juntar([colunas[i] for i in idx_neg if valores_shap_hist[i] < 0][:3]), 
                     fidelidade_hist
                 )
