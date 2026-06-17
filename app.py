@@ -1,3 +1,4 @@
+%%writefile app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -256,7 +257,7 @@ with aba_simulador:
             sex_in = st.selectbox("Sexo Biológico:", ["Masculino", "Feminino"], index=None)
             marital_in = st.selectbox("Estado Civil:", ["Married", "Single", "Separated", "Widowed", "Divorced/Other"], index=None)
         with inp_col2:
-            income_in = st.number_input("Renda Anual (USD):", min_value=0, max_value=500000, value=None, step=1000)
+            income_in = st.number_input("Renda (USD):", min_value=0, max_value=500000, value=None, step=1000)
             race_in = st.selectbox("Raça/Etnia:", ["Asian", "Black", "Hispanic", "MexAmerican", "White", "Other"], index=None)
             waist_in = st.number_input("Cintura (cm):", min_value=30.0, max_value=200.0, value=None, step=0.5)
         with inp_col3:
