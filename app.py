@@ -15,6 +15,7 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 
 st.markdown("""
 <style>
+    /* Deixa as 3 abas principais grandes e distribuídas horizontalmente */
     button[data-baseweb="tab"] > div[data-testid="stMarkdownContainer"] > p {
         font-size: 20px !important;
         font-weight: 600 !important;
@@ -112,26 +113,17 @@ def plotar_termometro_risco(probabilidade):
     return fig
 
 def plotar_impacto_didatico(valores_shap, colunas_originais, dados_brutos):
-    # Cria um DataFrame temporário para organizar o gráfico
     df_imp = pd.DataFrame({
         'Variavel': colunas_originais,
         'Impacto': valores_shap,
         'Abs_Impacto': np.abs(valores_shap),
         'Valor_Real': dados_brutos.values[0]
     })
-    
-    # Pega os 8 exames mais importantes para este paciente
     df_imp = df_imp.sort_values(by='Abs_Impacto', ascending=False).head(8)
-    
-    # Traduz as variáveis e cria o rótulo final (Ex: "Glicemia de Jejum (105.0)")
     df_imp['Variavel_PT'] = df_imp['Variavel'].map(lambda x: DICIONARIO_PT.get(x, x))
     df_imp['Label'] = df_imp.apply(lambda row: f"{row['Variavel_PT']} ({row['Valor_Real']})", axis=1)
-    
-    # Define as cores: Vermelho se agrava o risco (>0), Verde se protege (<0)
     df_imp['Cor'] = df_imp['Impacto'].apply(lambda x: '#e74c3c' if x > 0 else '#2ecc71')
     df_imp['Texto'] = df_imp['Impacto'].apply(lambda x: "Aumenta Risco" if x > 0 else "Reduz Risco")
-    
-    # Ordena pelo impacto real para o gráfico ficar bonito
     df_imp = df_imp.sort_values(by='Impacto', ascending=True)
     
     fig = go.Figure()
@@ -144,7 +136,6 @@ def plotar_impacto_didatico(valores_shap, colunas_originais, dados_brutos):
         textposition="inside",
         insidetextanchor="middle"
     ))
-    
     fig.update_layout(
         title={'text': "<b>Balanço Clínico do Paciente:</b> Quais exames pesaram na decisão?", 'font': {'size': 18}},
         xaxis_title="← Protege (Reduz o Risco)   |   Agrava (Aumenta o Risco) →",
@@ -230,6 +221,10 @@ def preparar_modelos_e_xai(_X, _y):
     explainer_cat = shap.TreeExplainer(modelo_cat)
     shap_values_cat = explainer_cat(X_scaled_df)
     shap_values_cat.data = _X.values
+    
+    # MODIFICAÇÃO CHAVE: Traduz os feature_names diretamente dentro da estrutura interna do objeto SHAP
+    shap_values_cat.feature_names = [DICIONARIO_PT.get(col, col) for col in _X.columns]
+    
     pfi_cat = permutation_importance(modelo_cat, X_scaled_df, _y, n_repeats=5, random_state=42)
 
     explainer_lime = lime.lime_tabular.LimeTabularExplainer(
@@ -289,10 +284,8 @@ with aba_simulador:
 
             df_novo_bruto = pd.DataFrame([{'Age': age_in, 'Sex': 1 if sex_in == "Feminino" else 0, 'Income': income_in, 'WaistCirc': waist_in, 'BMI': bmi_in, 'Albuminuria': alb_in, 'UrAlbCr': uralb_in, 'UricAcid': uric_in, 'BloodGlucose': blood_in, 'HDL': hdl_in, 'Triglycerides': tri_in, **encoded_fields}])[X.columns]
             df_novo_escalonado = scaler.transform(df_novo_bruto)
-            
             p_new_shap = modelo_ativo.predict_proba(df_novo_escalonado)[0][1] * 100
             
-            # Calcula LIME apenas para fidelidade, mas não exibe o gráfico confuso
             exp_lime_new = explainer_lime.explain_instance(df_novo_escalonado[0], modelo_ativo.predict_proba, num_features=8)
             p_new_lime = max(0.0, min(100.0, exp_lime_new.local_pred[0] * 100)) if hasattr(exp_lime_new, 'local_pred') else p_new_shap
             fidelidade_new_xai = 100.0 - abs(p_new_shap - p_new_lime)
@@ -300,17 +293,21 @@ with aba_simulador:
             shap_values_new = explainer_ativo(df_novo_escalonado)[0]
             valores_shap_new = shap_values_new.values if hasattr(shap_values_new, 'values') else shap_values_new
 
-            # --- RENDERIZANDO OS GRÁFICOS DIDÁTICOS ---
+            st.markdown("### 📊 Visão Clínica e Termómetro de Risco")
+            st.plotly_chart(plotar_termometro_risco(p_new_shap), use_container_width=True)
+
+            st.markdown("### 📈 Justificativas Algorítmicas (Matemática)")
             col_nplots1, col_nplots2 = st.columns(2)
             with col_nplots1:
-                st.plotly_chart(plotar_termometro_risco(p_new_shap), use_container_width=True)
+                # O SHAP Waterfall lê automaticamente os nomes em português do objeto principal
+                fig_new_shap, ax_new_shap = plt.subplots(figsize=(5, 4))
+                shap.plots.waterfall(shap_values_new, show=False)
+                st.pyplot(fig_new_shap)
 
             with col_nplots2:
-                # Usa a nova função que substitui o SHAP/LIME padrão por um gráfico fácil de ler
                 fig_didatica = plotar_impacto_didatico(valores_shap_new, X.columns.tolist(), df_novo_bruto)
                 st.plotly_chart(fig_didatica, use_container_width=True)
 
-            # ABAS INFERIORES DO SIMULADOR
             aba_sim_trad, aba_sim_ia = st.tabs(["📝 Laudo Tradicional (Regras Estatísticas)", "✨ Laudo IA Generativa (Gemini)"])
             
             with aba_sim_trad:
@@ -345,30 +342,28 @@ with aba_simulador:
 with aba_global:
     st.header("Interpretação Global (Como a IA pensa?)")
     
-    # Criamos um DataFrame com os nomes traduzidos para o SHAP e PFI lerem tudo em Português
     X_pt = X.rename(columns=DICIONARIO_PT)
     
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.markdown("**1. Quais exames são mais importantes? (Impacto Médio)**")
+        st.markdown("**1. Quais exames são mais importantes? (Impacto Médio SHAP)**")
         fig_bar, ax_bar = plt.subplots(figsize=(7, 5))
-        # Passando o X_pt traduzido. O SHAP Summary plot lerá os nomes corretos.
         shap.summary_plot(shap_values_ativos, X_pt, plot_type="bar", show=False, color='#3498db')
-        plt.xlabel("Peso Médio do Exame na Decisão Algorítmica")
+        
+        # MODIFICAÇÃO CHAVE: Força a sobrescrita do rótulo padrão em inglês gerado pelo SHAP
+        plt.xlabel("Impacto Médio na Decisão (Valor SHAP Absoluto)")
         st.pyplot(fig_bar)
 
     with col_g2:
-        st.markdown("**2. O que acontece se removermos um exame? (Queda de Acurácia)**")
+        st.markdown("**2. O que acontece se removermos um exame? (Queda PFI)**")
         sorted_idx = pfi_ativo.importances_mean.argsort()[-10:]
         fig_pfi, ax_pfi = plt.subplots(figsize=(7, 5))
-        # Usando os nomes traduzidos diretamente do dicionário
         nomes_traduzidos = [DICIONARIO_PT.get(X.columns[i], X.columns[i]) for i in sorted_idx]
         ax_pfi.barh(nomes_traduzidos, pfi_ativo.importances_mean[sorted_idx], color='#9b59b6')
         ax_pfi.set_xlabel("Impacto na Performance Geral do Sistema")
         fig_pfi.tight_layout()
         st.pyplot(fig_pfi)
 
-    # ABAS INFERIORES GLOBAL
     aba_glob_trad, aba_glob_ia = st.tabs(["📝 Laudo Tradicional (Regras Estatísticas)", "✨ Laudo IA Generativa (Gemini)"])
     
     with aba_glob_trad:
@@ -402,7 +397,6 @@ with aba_local:
     dados_pac_escalonado = scaler.transform(dados_pac_bruto)
     prob_shap_hist = modelo_ativo.predict_proba(dados_pac_escalonado)[0][1] * 100
 
-    # LIME calculado apenas para manter as métricas de confiabilidade no texto
     exp_lime_hist = explainer_lime.explain_instance(dados_pac_escalonado[0], modelo_ativo.predict_proba, num_features=6)
     p_lime_hist = max(0.0, min(100.0, exp_lime_hist.local_pred[0] * 100)) if hasattr(exp_lime_hist, 'local_pred') else prob_shap_hist
     fidelidade_hist = 100.0 - abs(prob_shap_hist - p_lime_hist)
@@ -414,11 +408,9 @@ with aba_local:
         st.plotly_chart(plotar_termometro_risco(prob_shap_hist), use_container_width=True)
         
     with col_hist2:
-        # Substitui os gráficos complexos pelo novo Balanço Clínico Didático
         fig_didatica_hist = plotar_impacto_didatico(valores_shap_hist, X.columns.tolist(), dados_pac_bruto)
         st.plotly_chart(fig_didatica_hist, use_container_width=True)
 
-    # ABAS INFERIORES LOCAL
     aba_loc_trad, aba_loc_ia = st.tabs(["📝 Laudo Tradicional (Regras Estatísticas)", "✨ Laudo IA Generativa (Gemini)"])
 
     with aba_loc_trad:
@@ -450,7 +442,7 @@ with aba_local:
                 resultado_llm = chamar_gemini_local(
                     prob_shap_hist, "ALTO RISCO" if prob_shap_hist >= 50 else "BAIXO RISCO", 
                     ", ".join(alertas_lista) if alertas_lista else "Nenhum limiar clássico", 
-                    traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_hist[i] > 0][:4]), 
+                    traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_health[i] > 0][:4]) if 'valores_shap_health' in locals() else traduzir_e_juntar([colunas[i] for i in idx_pos if valores_shap_hist[i] > 0][:4]), 
                     traduzir_e_juntar([colunas[i] for i in idx_neg if valores_shap_hist[i] < 0][:3]), 
                     fidelidade_hist
                 )
