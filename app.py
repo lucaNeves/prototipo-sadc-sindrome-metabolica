@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import shap
 import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.graph_objects as go
 import lime.lime_tabular
 import joblib
@@ -16,6 +15,7 @@ st.set_page_config(page_title="XAI - Síndrome Metabólica", layout="wide")
 
 st.markdown("""
 <style>
+    /* Deixa as 3 abas principais grandes e centralizadas */
     button[data-baseweb="tab"] > div[data-testid="stMarkdownContainer"] > p {
         font-size: 20px !important;
         font-weight: 600 !important;
@@ -75,6 +75,9 @@ DICIONARIO_PT = {
 }
 
 def traduzir(lista): return [DICIONARIO_PT.get(v, v) for v in lista]
+def traduzir_e_juntar(lista):
+    if not lista: return "Nenhum fator relevante isolado."
+    return ", ".join([f"**{f}**" for f in traduzir(lista)])
 
 # 2. CARREGAMENTO DOS DADOS
 @st.cache_data
@@ -85,55 +88,81 @@ def carregar_dados():
     return df, X, y
 
 # ========================================================
-# FUNÇÕES DE GRÁFICOS DIDÁTICOS (NOVAS)
+# FUNÇÃO DO TERMÔMETRO DIDÁTICO
 # ========================================================
 def plotar_termometro_risco(probabilidade):
     fig = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = probabilidade,
-        number = {'suffix': "%", 'font': {'size': 40}},
+        number = {'suffix': "%", 'font': {'size': 45}},
         domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': "Risco de Síndrome Metabólica", 'font': {'size': 20}},
+        title = {'text': "Risco Calculado pelo CatBoost", 'font': {'size': 22}},
         gauge = {
             'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
             'bar': {'color': "rgba(0,0,0,0.3)"},
             'bgcolor': "white",
             'steps': [
-                {'range': [0, 30], 'color': "#2ecc71"},   # Verde (Seguro)
-                {'range': [30, 50], 'color': "#f1c40f"},  # Amarelo (Atenção)
-                {'range': [50, 100], 'color': "#e74c3c"}  # Vermelho (Perigo)
+                {'range': [0, 30], 'color': "#2ecc71"},   # Verde
+                {'range': [30, 50], 'color': "#f1c40f"},  # Amarelo
+                {'range': [50, 100], 'color': "#e74c3c"}  # Vermelho
             ],
             'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': probabilidade}
         }
     ))
-    fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
+    fig.update_layout(height=350, margin=dict(l=20, r=20, t=50, b=20))
     return fig
 
-def plotar_boxplots_clinicos(dados_brutos_paciente, X_completo, y_completo, valores_shap_paciente):
-    # Pega as 3 variáveis que mais impactaram a decisão deste paciente
-    idx_top3 = np.argsort(np.abs(valores_shap_paciente))[::-1][:3]
-    top3_cols = [X_completo.columns[i] for i in idx_top3]
-    
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    
-    for i, col in enumerate(top3_cols):
-        # Cria um DataFrame temporário para o Seaborn
-        df_plot = pd.DataFrame({'Valor': X_completo[col], 'Diagnóstico': y_completo.map({0: 'Saudáveis', 1: 'Doentes'})})
-        
-        sns.boxplot(x='Diagnóstico', y='Valor', data=df_plot, ax=axes[i], palette=['#2ecc71', '#e74c3c'])
-        
-        # Desenha a "Estrela" com o valor exato do paciente
-        valor_pac = dados_brutos_paciente[col].values[0]
-        axes[i].axhline(y=valor_pac, color='black', linestyle='--', alpha=0.5)
-        axes[i].plot([0, 1], [valor_pac, valor_pac], marker='*', color='gold', markersize=20, linestyle='None', markeredgecolor='black', label="Este Paciente")
-        
-        axes[i].set_title(DICIONARIO_PT.get(col, col), fontweight='bold')
-        axes[i].set_xlabel('')
-        axes[i].set_ylabel('Valor do Exame')
-        if i == 0: axes[i].legend()
+# MOTORES DE TEXTO CLÁSSICO E IA
+def gerar_laudo_global_classico(pfi_ativo, feature_names):
+    importances = pfi_ativo.importances_mean
+    indices = np.argsort(importances)[::-1]
+    top_features = [feature_names[i] for i in indices[:6]]
+    criterios_ncep = ['WaistCirc', 'BloodGlucose', 'Triglycerides', 'HDL']
+    alinhados = traduzir([f for f in top_features if f in criterios_ncep])
+    nao_classicos = traduzir([f for f in top_features if f not in criterios_ncep])
 
-    plt.tight_layout()
-    return fig
+    return (
+        f"**🩺 Validação Clínica (Critérios NCEP-ATP III)**\nA análise global evidencia que o modelo prioriza preditores alinhados à fisiopatologia da Síndrome Metabólica. Biomarcadores como {', '.join([f'**{f}**' for f in alinhados])} exercem a maior influência preditiva.\n*(Nota: A Pressão Arterial não compõe a matriz devido a limitações do dataset).* \n\n"
+        f"**🧠 Análise Multidimensional (Padrões Complementares)**\nO algoritmo identifica preditores de forma integrada. Variáveis como {', '.join([f'**{f}**' for f in nao_classicos])} apresentaram impacto significativo na estratificação do risco sistêmico."
+    )
+
+def gerar_laudo_local_classico(dados_brutos, prob_shap, fidelidade, shap_values_paciente):
+    colunas = dados_brutos.columns.tolist()
+    valores_shap = shap_values_paciente.values if hasattr(shap_values_paciente, "values") else shap_values_paciente
+    idx_positivos = np.argsort(valores_shap)[::-1]
+    idx_negativos = np.argsort(valores_shap)
+    fatores_risco = traduzir([colunas[i] for i in idx_positivos if valores_shap[i] > 0][:4])
+    fatores_protecao = traduzir([colunas[i] for i in idx_negativos if valores_shap[i] < 0][:3])
+
+    alto_risco = prob_shap >= 50.0
+    status_diag = "RISCO CLÍNICO SIGNIFICATIVO" if alto_risco else "RISCO CLÍNICO CONTROLADO"
+    
+    glicemia = dados_brutos['BloodGlucose'].values[0] if 'BloodGlucose' in dados_brutos else None
+    cintura = dados_brutos['WaistCirc'].values[0] if 'WaistCirc' in dados_brutos else None
+    trig = dados_brutos['Triglycerides'].values[0] if 'Triglycerides' in dados_brutos else None
+    hdl = dados_brutos['HDL'].values[0] if 'HDL' in dados_brutos else None
+
+    alertas = []
+    if glicemia and glicemia >= 100: alertas.append(f"Glicemia ({glicemia:.1f})")
+    if cintura and cintura >= 88: alertas.append(f"Cintura ({cintura:.1f})")
+    if trig and trig >= 150: alertas.append(f"Triglicerídeos ({trig:.1f})")
+    if hdl and hdl < 50: alertas.append(f"HDL ({hdl:.1f})")
+
+    t_classico = f"**📋 Rastreio de Parâmetros Diretos:** {', '.join(alertas) if alertas else 'Nenhum limiar crítico clássico foi ultrapassado isoladamente.'}"
+    t_ia = f"**🤖 Estratificação (SHAP):** Risco de **{prob_shap:.1f}%** ({status_diag}).\n- **Agravantes:** {', '.join(fatores_risco)}.\n- **Atenuantes:** {', '.join(fatores_protecao)}."
+    t_conduta = f"**⚕️ Conduta:** {'Perfil de alto risco. Sugere-se aprofundamento propedêutico.' if alto_risco else 'Perfil estável. Seguimento de rotina.'} (Fidelidade XAI: {fidelidade:.1f}%)"
+
+    return {'texto_completo': f"{t_classico}\n\n{t_ia}\n\n{t_conduta}", 'tem_alertas': len(alertas) > 0, 'alto_risco': alto_risco}
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def chamar_gemini_local(prob_shap, status_risco, alertas_str, fatores_risco_str, fatores_protecao_str, fidelidade):
+    prompt = f"""[INSTRUÇÃO: RETORNE APENAS AS SEÇÕES DO LAUDO EM PORTUGUÊS. SEM COMENTÁRIOS EXTRAS].
+    Gere um laudo médico curto baseado nestes dados do modelo:
+    Risco: {prob_shap:.1f}% ({status_risco}). Alertas Clínicos: {alertas_str}. Agravantes Algorítmicos: {fatores_risco_str}. Atenuantes: {fatores_protecao_str}.
+    Redija 3 seções: 1. Rastreio Direto, 2. Auditoria Multidimensional, 3. Conduta Sugerida."""
+    texto = gerar_conteudo_com_fallback(prompt)
+    if texto in ["ERRO_CHAVE", "ESGOTOU_COTA", "ERRO_GERAL"]: return "⚠️ Não foi possível gerar o Laudo de IA (Cota excedida ou Erro na API)."
+    return texto
 
 # 4. PREPARAÇÃO DOS MODELOS E EXPLICADORES
 @st.cache_resource
@@ -169,7 +198,6 @@ aba_simulador, aba_global, aba_local = st.tabs([
 # --- ABA 1: SIMULADOR CLÍNICO ---
 with aba_simulador:
     st.header("Entrada de Novo Paciente (Simulador Clínico)")
-    st.write("Insira os parâmetros para obter o diagnóstico. Os gráficos gerados são focados em facilitar o entendimento clínico.")
 
     with st.form("form_novo_paciente"):
         inp_col1, inp_col2, inp_col3, inp_col4 = st.columns(4)
@@ -191,7 +219,9 @@ with aba_simulador:
             alb_in = st.selectbox("Albuminúria (Grau):", [0, 1, 2], index=None)
             uralb_in = st.number_input("Razão Alb/Cr (mg/g):", min_value=0.0, max_value=5000.0, value=None, step=1.0)
 
-        submitted = st.form_submit_button("Gerar Diagnóstico Didático", type="primary")
+        st.markdown("---")
+        usar_ia_simulador = st.checkbox("🤖 Solicitar Parecer Textual da Inteligência Artificial (Gemini)")
+        submitted = st.form_submit_button("Gerar Diagnóstico e Laudos", type="primary")
 
     if submitted:
         variaveis_entrada = [age_in, sex_in, marital_in, income_in, race_in, waist_in, bmi_in, blood_in, hdl_in, tri_in, uric_in, alb_in, uralb_in]
@@ -202,59 +232,94 @@ with aba_simulador:
             if f"Marital_{marital_in}" in encoded_fields: encoded_fields[f"Marital_{marital_in}"] = 1
             if f"Race_{race_in}" in encoded_fields: encoded_fields[f"Race_{race_in}"] = 1
 
-            novo_paciente_dict = {'Age': age_in, 'Sex': 1 if sex_in == "Feminino" else 0, 'Income': income_in, 'WaistCirc': waist_in, 'BMI': bmi_in, 'Albuminuria': alb_in, 'UrAlbCr': uralb_in, 'UricAcid': uric_in, 'BloodGlucose': blood_in, 'HDL': hdl_in, 'Triglycerides': tri_in, **encoded_fields}
-
-            df_novo_bruto = pd.DataFrame([novo_paciente_dict])[X.columns]
+            df_novo_bruto = pd.DataFrame([{'Age': age_in, 'Sex': 1 if sex_in == "Feminino" else 0, 'Income': income_in, 'WaistCirc': waist_in, 'BMI': bmi_in, 'Albuminuria': alb_in, 'UrAlbCr': uralb_in, 'UricAcid': uric_in, 'BloodGlucose': blood_in, 'HDL': hdl_in, 'Triglycerides': tri_in, **encoded_fields}])[X.columns]
             df_novo_escalonado = scaler.transform(df_novo_bruto)
+            
             p_new_shap = modelo_ativo.predict_proba(df_novo_escalonado)[0][1] * 100
-
-            st.markdown("### 📊 Visão Clínica: Termômetro de Risco")
-            # Usa o novo Termômetro
-            fig_gauge = plotar_termometro_risco(p_new_shap)
-            st.plotly_chart(fig_gauge, use_container_width=True)
-
-            st.markdown("### 📦 Onde este paciente se encaixa? (Comparação com a População)")
-            shap_values_new = explainer_ativo(df_novo_escalonado)[0]
-            valores_shap_new = shap_values_new.values
             
-            # Chama a nossa nova função de Boxplot didático
-            fig_boxes = plotar_boxplots_clinicos(df_novo_bruto, X, y, valores_shap_new)
-            st.pyplot(fig_boxes)
+            exp_lime_new = explainer_lime.explain_instance(df_novo_escalonado[0], modelo_ativo.predict_proba, num_features=8)
+            p_new_lime = max(0.0, min(100.0, exp_lime_new.local_pred[0] * 100)) if hasattr(exp_lime_new, 'local_pred') else p_new_shap
+            fidelidade_new_xai = 100.0 - abs(p_new_shap - p_new_lime)
+
+            # --- RENDERIZANDO OS GRÁFICOS ---
+            st.markdown("### 📊 Visão Clínica e Termômetro de Risco")
+            st.plotly_chart(plotar_termometro_risco(p_new_shap), use_container_width=True)
+
+            st.markdown("### 📈 Justificativas Algorítmicas (Matemática)")
+            col_nplots1, col_nplots2 = st.columns(2)
+            with col_nplots1:
+                st.markdown("**SHAP Waterfall Plot**")
+                shap_values_new = explainer_ativo(df_novo_escalonado)[0]
+                shap_values_new.data = df_novo_bruto.values[0]
+                fig_new_shap, ax_new_shap = plt.subplots(figsize=(5, 4))
+                shap.plots.waterfall(shap_values_new, show=False)
+                st.pyplot(fig_new_shap)
+
+            with col_nplots2:
+                st.markdown("**LIME Explanation Plot**")
+                fig_new_lime = exp_lime_new.as_pyplot_figure()
+                fig_new_lime.set_size_inches(5, 4)
+                fig_new_lime.tight_layout()
+                st.pyplot(fig_new_lime)
+
+            # --- RENDERIZANDO OS LAUDOS TEXTUAIS (AGORA BEM VISÍVEIS) ---
+            st.markdown("---")
+            st.markdown("### 📝 Laudo Clínico (Regras Estatísticas)")
+            laudos_sim = gerar_laudo_local_classico(df_novo_bruto, p_new_shap, fidelidade_new_xai, shap_values_new.values)
             
-            st.markdown("*(A **estrela dourada** mostra o exame do paciente atual. As caixas verdes representam os exames de pessoas saudáveis do banco de dados, e as vermelhas representam pessoas com a Síndrome).*")
+            if laudos_sim['alto_risco']: st.error(laudos_sim['texto_completo'])
+            elif laudos_sim['tem_alertas']: st.warning(laudos_sim['texto_completo'])
+            else: st.success(laudos_sim['texto_completo'])
+
+            if usar_ia_simulador:
+                st.markdown("### ✨ Parecer Multidimensional da Inteligência Artificial (Gemini)")
+                with st.spinner("Conectando à IA..."):
+                    valores = shap_values_new.values
+                    idx_pos = np.argsort(valores)[::-1]
+                    idx_neg = np.argsort(valores)
+                    colunas = X.columns.tolist()
+                    
+                    alertas = [f"{var}: {val}" for var, val in zip(['Glicose', 'Cintura', 'Triglicerídeos'], [blood_in, waist_in, tri_in]) if val is not None and val >= 100] # Simplificação para prompt
+                    
+                    laudo_ia = chamar_gemini_local(
+                        p_new_shap, "ALTO RISCO" if p_new_shap >= 50 else "BAIXO RISCO", 
+                        ", ".join(alertas) if alertas else "Nenhum limiar clássico", 
+                        traduzir_e_juntar([colunas[i] for i in idx_pos if valores[i] > 0][:4]), 
+                        traduzir_e_juntar([colunas[i] for i in idx_neg if valores[i] < 0][:3]), 
+                        fidelidade_new_xai
+                    )
+                    st.info(laudo_ia)
 
 
 # --- ABA 2: GLOBAL ---
 with aba_global:
     st.header("Interpretação Global (Como a IA pensa?)")
-    st.write("Gráficos simplificados para demonstrar as variáveis médicas que o algoritmo considera mais importantes no diagnóstico.")
-
+    
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        st.markdown("**1. Quais exames são mais importantes? (Impacto Médio)**")
-        st.write("*(Gráfico de barras didático: Barras maiores indicam que a IA presta mais atenção neste exame)*")
+        st.markdown("**1. Quais exames são mais importantes? (Impacto Médio SHAP)**")
         fig_bar, ax_bar = plt.subplots(figsize=(7, 5))
-        # Mudamos o summary_plot para tipo BARRAS (mais didático)
         shap.summary_plot(shap_values_ativos, X, plot_type="bar", show=False, color='#3498db')
         plt.xlabel("Peso Médio do Exame na Decisão")
         st.pyplot(fig_bar)
 
     with col_g2:
-        st.markdown("**2. O que acontece se removermos um exame? (Queda de Acerto)**")
-        st.write("*(Se a barra é grande, significa que esconder este exame do médico faria ele errar muitos diagnósticos)*")
-        sorted_idx = pfi_ativo.importances_mean.argsort()[-10:] # Mostra só os top 10 para ficar limpo
+        st.markdown("**2. O que acontece se removermos um exame? (Queda PFI)**")
+        sorted_idx = pfi_ativo.importances_mean.argsort()[-10:]
         fig_pfi, ax_pfi = plt.subplots(figsize=(7, 5))
         ax_pfi.barh([DICIONARIO_PT.get(X.columns[i], X.columns[i]) for i in sorted_idx], pfi_ativo.importances_mean[sorted_idx], color='#9b59b6')
         ax_pfi.set_xlabel("Queda de Acurácia (Importância)")
         fig_pfi.tight_layout()
         st.pyplot(fig_pfi)
 
+    st.markdown("---")
+    st.markdown("### 📝 Conclusões do Comportamento Global")
+    st.success(gerar_laudo_global_classico(pfi_ativo, X.columns.tolist()))
+
 
 # --- ABA 3: LOCAL (HISTÓRICOS) ---
 with aba_local:
-    st.header("Auditoria de Prontuários (Análise Matemática Aprofundada)")
-    st.write("Área técnica para validação algorítmica. Recomendada para cientistas de dados e validação de engenharia clínica.")
-
+    st.header("Auditoria de Prontuários Históricos")
     paciente_selecionado = st.selectbox("Selecione o paciente histórico:", options=df['seqn'].unique(), format_func=lambda x: f"Prontuário {int(x)} - diagnóstico: {int(df[df['seqn'] == x]['MetabolicSyndrome'].values[0])}")
 
     idx_pac = df[df['seqn'] == paciente_selecionado].index[0]
@@ -276,3 +341,12 @@ with aba_local:
         fig_lime_hist.set_size_inches(6, 5)
         fig_lime_hist.tight_layout()
         st.pyplot(fig_lime_hist)
+
+    st.markdown("---")
+    st.markdown("### 📝 Laudo Técnico do Paciente Histórico")
+    
+    p_lime_hist = max(0.0, min(100.0, exp_lime_hist.local_pred[0] * 100)) if hasattr(exp_lime_hist, 'local_pred') else prob_shap_hist
+    laudo_hist = gerar_laudo_local_classico(dados_pac_bruto, prob_shap_hist, 100.0 - abs(prob_shap_hist - p_lime_hist), shap_values_ativos[idx_pac].values)
+    
+    if laudo_hist['alto_risco']: st.error(laudo_hist['texto_completo'])
+    else: st.success(laudo_hist['texto_completo'])
